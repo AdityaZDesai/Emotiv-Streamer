@@ -1,0 +1,125 @@
+EEG Data Summary for emotiv-07-08-2025_18-31-33.mat
+==================================================
+
+Recording Information:
+  Date: emotiv-07-08-2025_18-31-33.mat
+  Sampling frequency: 128 Hz
+  Duration: 38.82 seconds
+  Number of time points: 4881
+  Number of channels: 14
+
+Channel Information:
+  Channel 1: F3 
+  Channel 2: FC5
+  Channel 3: AF3
+  Channel 4: F7 
+  Channel 5: T7 
+  Channel 6: P7 
+  Channel 7: O1 
+  Channel 8: O2 
+  Channel 9: P8 
+  Channel 10: T8 
+  Channel 11: F8 
+  Channel 12: AF4
+  Channel 13: FC6
+  Channel 14: F4 
+
+Data Statistics:
+  F3 :
+    Mean: 2117.4998 μV
+    Std: 159.9088 μV
+    Min: 399.7737 μV
+    Max: 4173.8247 μV
+    Range: 3774.0510 μV
+
+  FC5:
+    Mean: 2323.3120 μV
+    Std: 72.8503 μV
+    Min: 1236.5154 μV
+    Max: 2914.6806 μV
+    Range: 1678.1652 μV
+
+  AF3:
+    Mean: 2371.9549 μV
+    Std: 173.1362 μV
+    Min: 552.9726 μV
+    Max: 3659.3469 μV
+    Range: 3106.3743 μV
+
+  F7 :
+    Mean: 2178.8247 μV
+    Std: 94.1701 μV
+    Min: 1540.0521 μV
+    Max: 2943.0315 μV
+    Range: 1402.9794 μV
+
+  T7 :
+    Mean: 2167.3810 μV
+    Std: 67.1529 μV
+    Min: 1536.4107 μV
+    Max: 2787.2316 μV
+    Range: 1250.8209 μV
+
+  P7 :
+    Mean: 2136.0548 μV
+    Std: 144.5408 μV
+    Min: 995.4027 μV
+    Max: 3065.7987 μV
+    Range: 2070.3960 μV
+
+  O1 :
+    Mean: 1961.0638 μV
+    Std: 214.7768 μV
+    Min: 197.6760 μV
+    Max: 3990.9744 μV
+    Range: 3793.2984 μV
+
+  O2 :
+    Mean: 2423.6748 μV
+    Std: 110.4038 μV
+    Min: 1076.5539 μV
+    Max: 3795.6393 μV
+    Range: 2719.0854 μV
+
+  P8 :
+    Mean: 2233.9802 μV
+    Std: 93.8382 μV
+    Min: 1019.5920 μV
+    Max: 2953.4355 μV
+    Range: 1933.8435 μV
+
+  T8 :
+    Mean: 2274.1919 μV
+    Std: 24.3544 μV
+    Min: 2043.0855 μV
+    Max: 2521.4094 μV
+    Range: 478.3239 μV
+
+  F8 :
+    Mean: 2287.9560 μV
+    Std: 161.3772 μV
+    Min: 1066.6701 μV
+    Max: 3923.8686 μV
+    Range: 2857.1985 μV
+
+  AF4:
+    Mean: 2174.3974 μV
+    Std: 146.9148 μV
+    Min: 110.5425 μV
+    Max: 4123.8855 μV
+    Range: 4013.3430 μV
+
+  FC6:
+    Mean: 2213.6666 μV
+    Std: 54.7143 μV
+    Min: 1514.8224 μV
+    Max: 2722.2066 μV
+    Range: 1207.3842 μV
+
+  F4 :
+    Mean: 2108.9896 μV
+    Std: 120.9727 μV
+    Min: 294.9534 μV
+    Max: 2681.6310 μV
+    Range: 2386.6776 μV
+
