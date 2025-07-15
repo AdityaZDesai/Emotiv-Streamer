@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Record EEG data from Emotiv EPOC headset and save to .mat file
+Record EEG data from various EEG headsets and save to .mat file
 """
 
 import scipy.io
@@ -18,23 +18,139 @@ class EEGRecorder:
         self.data_buffer = []
         self.time_buffer = []
         self.start_time = None
+        self.selected_device = None
+        
+    def list_devices(self):
+        """List all available EEG devices"""
+        print("🔍 Scanning for EEG devices...")
+        try:
+            devices = EPOC.list_all_devices()
+            
+            if not devices:
+                print("No USB devices found!")
+                return []
+            
+            # Filter and display EEG devices
+            eeg_devices = [d for d in devices if d['is_eeg']]
+            
+            if eeg_devices:
+                print(f"\n✓ Found {len(eeg_devices)} EEG device(s):")
+                for i, device in enumerate(eeg_devices):
+                    print(f"  {i+1}. {device['manufacturer']} - {device['product']}")
+                    print(f"     Serial: {device['serial']}")
+                    print(f"     VID:PID = {device['vendor_id']}:{device['product_id']}")
+                    print()
+            else:
+                print("No EEG devices found in the automatic scan.")
+                print("You can still choose from all USB devices manually.")
+            
+            return devices
+            
+        except Exception as e:
+            print(f"Error scanning for devices: {e}")
+            return []
+    
+    def select_device(self):
+        """Interactive device selection"""
+        print("🎧 EEG Device Selection")
+        print("="*50)
+        
+        devices = self.list_devices()
+        if not devices:
+            return None
+        
+        print("\nOptions:")
+        print("1. Automatically select device")
+        print("2. Manually select device")
+        print("3. Use default Emotiv detection")
+        print("4. Cancel")
+        
+        while True:
+            try:
+                choice = int(input("\nSelect option (1-4): "))
+                
+                if choice == 1:
+                    # Auto-select first EEG device
+                    eeg_devices = [d for d in devices if d['is_eeg']]
+                    if eeg_devices:
+                        self.selected_device = eeg_devices[0]
+                        print(f"✓ Auto-selected: {self.selected_device['manufacturer']} - {self.selected_device['product']}")
+                        return self.selected_device
+                    else:
+                        print("No EEG devices found for auto-selection.")
+                        continue
+                        
+                elif choice == 2:
+                    # Manual selection
+                    self.selected_device = EPOC.select_device()
+                    if self.selected_device:
+                        print(f"✓ Selected: {self.selected_device['manufacturer']} - {self.selected_device['product']}")
+                        return self.selected_device
+                    else:
+                        print("No device selected.")
+                        return None
+                        
+                elif choice == 3:
+                    # Use default Emotiv detection
+                    self.selected_device = None
+                    print("✓ Using default Emotiv device detection")
+                    return "default"
+                    
+                elif choice == 4:
+                    return None
+                    
+                else:
+                    print("Invalid choice. Please try again.")
+                    
+            except ValueError:
+                print("Please enter a valid number.")
         
     def setup_headset(self):
-        """Initialize the Emotiv EPOC headset"""
+        """Initialize the EEG headset"""
         try:
-            print("Initializing Emotiv EPOC headset...")
-            self.epoc = EPOC()
+            # Device selection
+            device_choice = self.select_device()
+            
+            if device_choice is None:
+                print("No device selected. Exiting.")
+                return False
+            
+            print(f"\n{'='*60}")
+            print("🎧 Initializing EEG Headset...")
+            print(f"{'='*60}")
+            
+            if device_choice == "default":
+                # Use default Emotiv detection
+                print("Using default Emotiv device detection...")
+                self.epoc = EPOC()
+            else:
+                # Use selected device
+                print(f"Connecting to: {device_choice['manufacturer']} - {device_choice['product']}")
+                self.epoc = EPOC(device_info=device_choice)
+            
             print("✓ Headset initialized successfully!")
-            print(f"Channels: {self.epoc.channels}")
-            print(f"Sampling rate: {self.epoc.sampling_rate} Hz")
+            
+            # Display device information
+            if hasattr(self.epoc, 'channels') and getattr(self.epoc, 'channels', None):
+                print(f"Channels: {getattr(self.epoc, 'channels', [])}")
+            if hasattr(self.epoc, 'sampling_rate') and getattr(self.epoc, 'sampling_rate', None):
+                print(f"Sampling rate: {getattr(self.epoc, 'sampling_rate', 'Unknown')} Hz")
+            
+            if self.selected_device:
+                print(f"Device: {self.selected_device['manufacturer']} - {self.selected_device['product']}")
+                print(f"Serial: {self.selected_device['serial']}")
+                print(f"VID:PID: {self.selected_device['vendor_id']}:{self.selected_device['product_id']}")
+            
             return True
+            
         except Exception as e:
             print(f"✗ Failed to initialize headset: {e}")
             print("\nTroubleshooting tips:")
-            print("1. Make sure the Emotiv EPOC headset is connected via USB")
-            print("2. Make sure the headset is turned ON")
+            print("1. Make sure the EEG headset is connected via USB")
+            print("2. Make sure the headset is turned ON (if applicable)")
             print("3. Try running with sudo: sudo python record_eeg_data.py")
-            print("4. Check if the headset is recognized: lsusb | grep Emotiv")
+            print("4. Check if the headset is recognized: lsusb")
+            print("5. Try different USB ports")
             return False
     
     def signal_handler(self, signum, frame):
@@ -60,14 +176,18 @@ class EEGRecorder:
         print(f"\n{'='*60}")
         print("🎧 EEG Recording Started!")
         print(f"{'='*60}")
-        print("Recording EEG data from Emotiv EPOC headset...")
+        print("Recording EEG data from headset...")
         print("Press Ctrl+C to stop recording and save data")
         
         if duration:
             print(f"Recording will automatically stop after {duration} seconds")
         
-        print(f"\nChannels: {self.epoc.channels}")
-        print(f"Sampling rate: {self.epoc.sampling_rate} Hz")
+        # Display channel info if available
+        if hasattr(self.epoc, 'channels') and getattr(self.epoc, 'channels', None):
+            print(f"\nChannels: {getattr(self.epoc, 'channels', [])}")
+        if hasattr(self.epoc, 'sampling_rate') and getattr(self.epoc, 'sampling_rate', None):
+            print(f"Sampling rate: {getattr(self.epoc, 'sampling_rate', 'Unknown')} Hz")
+        
         print(f"Start time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}")
         
@@ -75,7 +195,13 @@ class EEGRecorder:
             sample_count = 0
             while self.recording:
                 # Get EEG sample
-                data = self.epoc.get_sample()
+                try:
+                    data = self.epoc.get_sample()
+                except Exception as e:
+                    print(f"Error getting sample: {e}")
+                    # For non-Emotiv devices, we might need different handling
+                    time.sleep(0.001)
+                    continue
                 
                 if data:  # Skip battery packets (empty data)
                     current_time = time.time() - self.start_time
@@ -86,7 +212,7 @@ class EEGRecorder:
                     
                     sample_count += 1
                     
-                    # Print progress every 128 samples (1 second)
+                    # Print progress every 128 samples (approximately 1 second for 128Hz)
                     if sample_count % 128 == 0:
                         elapsed = time.time() - self.start_time
                         print(f"Recording... {elapsed:.1f}s elapsed, {sample_count} samples collected")
@@ -128,28 +254,59 @@ class EEGRecorder:
         print(f"Total samples: {len(self.data_buffer)}")
         print(f"Recording duration: {time_data[-1]:.2f} seconds")
         print(f"Data shape: {eeg_data.shape}")
-        print(f"Channels: {self.epoc.channels}")
+        
+        # Get channel info if available
+        channels = None
+        sampling_rate = 128  # Default
+        
+        if hasattr(self.epoc, 'channels') and getattr(self.epoc, 'channels', None):
+            channels = getattr(self.epoc, 'channels', None)
+            print(f"Channels: {channels}")
+        
+        if hasattr(self.epoc, 'sampling_rate') and getattr(self.epoc, 'sampling_rate', None):
+            sampling_rate = getattr(self.epoc, 'sampling_rate', 128)
         
         # Save to .mat file
         timestamp = datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
-        filename = f"emotiv-{timestamp}.mat"
+        
+        # Include device info in filename if available
+        device_name = "eeg"
+        if self.selected_device:
+            device_name = f"{self.selected_device['manufacturer'].replace(' ', '_')}-{self.selected_device['product'].replace(' ', '_')}"
+        
+        filename = f"{device_name}-{timestamp}.mat"
         
         # Create MATLAB-compatible data structure
         mat_data = {
             'data': {
                 'trial': eeg_data.T,  # Transpose to match expected format
                 'time': time_data,
-                'label': np.array(self.epoc.channels),
-                'fsample': self.epoc.sampling_rate,
+                'label': np.array(channels) if channels else np.array([f"Ch{i+1}" for i in range(eeg_data.shape[1])]),
+                'fsample': sampling_rate,
                 'sampleinfo': np.array([1, len(time_data)])
             },
             'date': timestamp
         }
         
+        # Add device info if available
+        if self.selected_device:
+            mat_data['device_info'] = {
+                'manufacturer': self.selected_device['manufacturer'],
+                'product': self.selected_device['product'],
+                'serial': self.selected_device['serial'],
+                'vendor_id': self.selected_device['vendor_id'],
+                'product_id': self.selected_device['product_id']
+            }
+        
         try:
             scipy.io.savemat(filename, mat_data)
             print(f"✓ Data saved to: {filename}")
-            print(f"✓ File size: {len(self.data_buffer) * len(self.epoc.channels) * 8 / 1024:.1f} KB")
+            
+            # Calculate file size
+            num_channels = eeg_data.shape[1] if len(eeg_data.shape) > 1 else 1
+            file_size_kb = len(self.data_buffer) * num_channels * 8 / 1024
+            print(f"✓ File size: {file_size_kb:.1f} KB")
+            
         except Exception as e:
             print(f"✗ Failed to save data: {e}")
             return False
@@ -159,13 +316,17 @@ class EEGRecorder:
     def disconnect(self):
         """Disconnect from the headset"""
         if self.epoc:
-            self.epoc.disconnect()
-            print("✓ Headset disconnected")
+            try:
+                self.epoc.disconnect()
+                print("✓ Headset disconnected")
+            except Exception as e:
+                print(f"Note: Error during disconnect: {e}")
 
 def main():
     """Main function"""
-    print("🎧 Emotiv EPOC EEG Data Recorder")
+    print("🎧 Universal EEG Data Recorder")
     print("="*50)
+    print("Supports multiple EEG headsets including Emotiv, OpenBCI, Muse, and others")
     
     recorder = EEGRecorder()
     

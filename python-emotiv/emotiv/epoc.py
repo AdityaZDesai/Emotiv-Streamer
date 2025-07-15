@@ -20,7 +20,7 @@
 from __future__ import print_function, division
 """\
 This module provides the EPOC class for accessing Emotiv EPOC
-EEG headsets.
+EEG headsets and other EEG devices.
 """
 
 import os
@@ -71,6 +71,61 @@ class EPOC(object):
     # Device descriptions for USB
     INTERFACE_DESC = "Emotiv RAW DATA"
     MANUFACTURER_PREFIX = "Emotiv Systems"
+    NORDIC_MANUFACTURER = "Nordic Systems"
+
+    # Common EEG device manufacturers to look for
+    EEG_MANUFACTURERS = [
+        "Emotiv Systems",
+        "Nordic Systems",
+        "g.tec",
+        "GTEC",
+        "BrainProducts",
+        "Brain Products",
+        "Neurosky",
+        "NeuroSky",
+        "OpenBCI",
+        "Interaxon",
+        "Muse",
+        "ANT Neuro",
+        "Biosemi",
+        "Compumedics",
+        "Nihon Kohden",
+        "Electrical Geodesics",
+        "EGI",
+        "Advanced Brain Monitoring",
+        "TMSi",
+        "Cognionics",
+        "Wearable Sensing",
+        "NeuroElectrics",
+        "BrainVision",
+        "ActiCHamp",
+        "eego",
+        "Mentalab",
+        "Explore",
+        "Unicorn",
+        "Cognixion",
+        "Kernel",
+        "NextMind",
+        "Neurosity",
+        "Paradromics",
+        "Synchron",
+        "Blackrock",
+        "Ripple",
+        "Intan",
+        "Plexon",
+        "Multi Channel Systems",
+        "MCS",
+        "Alpha Omega",
+        "Thomas Recording",
+        "Neuralynx",
+        "Cambridge NeuroTech",
+        "NeuroNexus",
+        "Microprobes",
+        "FHC",
+        "Neuralace",
+        "Neuralink",
+        "Nordic Semiconductor"
+    ]
 
     # Channel names
     channels = ["F3", "FC5", "AF3", "F7", "T7", "P7", "O1",
@@ -132,7 +187,7 @@ class EPOC(object):
         'QU': [99,100,101,102,103,104,105,106,107,108,109,110,111,112],
     }
 
-    def __init__(self, method="libusb", serial_number=None, enable_gyro=True):
+    def __init__(self, method="libusb", serial_number=None, enable_gyro=True, device_info=None):
         self.vendor_id = None
         self.product_id = None
         self.decryption = None
@@ -144,6 +199,7 @@ class EPOC(object):
         self.counter = 0
         self.gyroX = 0
         self.gyroY = 0
+        self.device_info = device_info  # Store device info for selection
 
         # Access method can be direct/libusb/dummy (Default: libusb)
         # If dummy is given the class behaves as a random signal generator
@@ -173,6 +229,150 @@ class EPOC(object):
         # Enumerate the bus to find EPOC devices
         self.enumerate()
 
+    @staticmethod
+    def list_all_devices():
+        """List all available EEG devices."""
+        devices = []
+        
+        # Find all USB devices
+        all_devices = usb.core.find(find_all=True)
+        
+        if not all_devices:
+            print("No USB devices found.")
+            return devices
+        
+        for dev in all_devices:
+            try:
+                # Try to get device information
+                manufacturer = ""
+                product = ""
+                serial = ""
+                
+                try:
+                    if dev.iManufacturer:
+                        manufacturer = usb.util.get_string(dev, dev.iManufacturer)
+                except (usb.core.USBError, UnicodeDecodeError):
+                    manufacturer = "Unknown"
+                
+                try:
+                    if dev.iProduct:
+                        product = usb.util.get_string(dev, dev.iProduct)
+                except (usb.core.USBError, UnicodeDecodeError):
+                    product = "Unknown"
+                
+                try:
+                    if dev.iSerialNumber:
+                        serial = usb.util.get_string(dev, dev.iSerialNumber)
+                except (usb.core.USBError, UnicodeDecodeError):
+                    serial = "Unknown"
+                
+                device_info = {
+                    'device': dev,
+                    'manufacturer': manufacturer,
+                    'product': product,
+                    'serial': serial,
+                    'vendor_id': f"{dev.idVendor:04x}",
+                    'product_id': f"{dev.idProduct:04x}",
+                    'is_eeg': EPOC._is_likely_eeg_device(manufacturer, product)
+                }
+                
+                devices.append(device_info)
+                
+            except Exception as e:
+                # Skip devices that can't be queried
+                continue
+        
+        return devices
+
+    @staticmethod
+    def _is_likely_eeg_device(manufacturer, product):
+        """Check if a device is likely an EEG device based on manufacturer and product name."""
+        if not manufacturer or not product:
+            return False
+        
+        # Check manufacturer
+        for eeg_manu in EPOC.EEG_MANUFACTURERS:
+            if eeg_manu.lower() in manufacturer.lower():
+                return True
+        
+        # Check product name for EEG-related keywords
+        eeg_keywords = ['eeg', 'epoc', 'emotiv', 'brain', 'neural', 'neuro', 'headset', 'muse', 'openbci']
+        product_lower = product.lower()
+        
+        for keyword in eeg_keywords:
+            if keyword in product_lower:
+                return True
+        
+        return False
+
+    @staticmethod
+    def select_device():
+        """Interactive device selection."""
+        devices = EPOC.list_all_devices()
+        
+        if not devices:
+            print("No USB devices found!")
+            return None
+        
+        # Filter EEG devices first
+        eeg_devices = [d for d in devices if d['is_eeg']]
+        
+        if eeg_devices:
+            print("\n" + "="*80)
+            print("🎧 EEG Devices Found:")
+            print("="*80)
+            
+            for i, device in enumerate(eeg_devices):
+                print(f"{i+1}. {device['manufacturer']} - {device['product']}")
+                print(f"   Serial: {device['serial']}")
+                print(f"   VID:PID = {device['vendor_id']}:{device['product_id']}")
+                print()
+            
+            print(f"{len(eeg_devices)+1}. Show all USB devices")
+            print(f"{len(eeg_devices)+2}. Cancel")
+            
+            while True:
+                try:
+                    choice = int(input(f"\nSelect device (1-{len(eeg_devices)+2}): "))
+                    
+                    if 1 <= choice <= len(eeg_devices):
+                        return eeg_devices[choice-1]
+                    elif choice == len(eeg_devices)+1:
+                        break  # Show all devices
+                    elif choice == len(eeg_devices)+2:
+                        return None  # Cancel
+                    else:
+                        print("Invalid choice. Please try again.")
+                except ValueError:
+                    print("Please enter a valid number.")
+        
+        # Show all devices
+        print("\n" + "="*80)
+        print("📱 All USB Devices:")
+        print("="*80)
+        
+        for i, device in enumerate(devices):
+            eeg_indicator = "🎧" if device['is_eeg'] else "  "
+            print(f"{eeg_indicator}{i+1}. {device['manufacturer']} - {device['product']}")
+            print(f"   Serial: {device['serial']}")
+            print(f"   VID:PID = {device['vendor_id']}:{device['product_id']}")
+            print()
+        
+        print(f"{len(devices)+1}. Cancel")
+        
+        while True:
+            try:
+                choice = int(input(f"\nSelect device (1-{len(devices)+1}): "))
+                
+                if 1 <= choice <= len(devices):
+                    return devices[choice-1]
+                elif choice == len(devices)+1:
+                    return None  # Cancel
+                else:
+                    print("Invalid choice. Please try again.")
+            except ValueError:
+                print("Please enter a valid number.")
+
     def _is_epoc(self, device):
         """Custom match function for libusb."""
         try:
@@ -183,14 +383,23 @@ class EPOC(object):
             print(usb_exception)
             return False
         else:
-            if manu and manu.startswith(self.MANUFACTURER_PREFIX):
-                print(manu)
+            if manu and (manu.startswith(self.MANUFACTURER_PREFIX) or manu.startswith(self.NORDIC_MANUFACTURER)):
+                print(f"Detected Emotiv-compatible device: {manu}")
                 return True
                 # FIXME: This may not be necessary at all Found a dongle, check for interface class 3
                 for interf in device.get_active_configuration():
                     if_str = usb.util.get_string(device, interf.iInterface)
                     if if_str == self.INTERFACE_DESC:
                         return True
+
+    def _is_selected_device(self, device):
+        """Check if this is the selected device."""
+        if not self.device_info:
+            return False
+        
+        # Match by vendor_id and product_id
+        return (device.idVendor == self.device_info['device'].idVendor and 
+                device.idProduct == self.device_info['device'].idProduct)
 
     def set_channel_mask(self, channel_mask):
         """Set channels from which to acquire."""
@@ -203,13 +412,25 @@ class EPOC(object):
             self.get_sample = self.__get_sample_dummy
             return
 
-        devices = usb.core.find(find_all=True, custom_match=self._is_epoc)
+        # If device_info is provided, use the specific device
+        if self.device_info:
+            devices = [self.device_info['device']]
+        else:
+            # Original behavior: find Emotiv devices
+            devices = usb.core.find(find_all=True, custom_match=self._is_epoc)
 
         if not devices:
-            raise EPOCNotPluggedError("Emotiv EPOC not found.")
+            if self.device_info:
+                raise EPOCNotPluggedError("Selected device not found or not accessible.")
+            else:
+                raise EPOCNotPluggedError("Emotiv EPOC not found.")
 
         for dev in devices:
-            serial = usb.util.get_string(dev, dev.iSerialNumber)
+            try:
+                serial = usb.util.get_string(dev, dev.iSerialNumber)
+            except (usb.core.USBError, UnicodeDecodeError):
+                serial = "Unknown"
+            
             if self.serial_number and self.serial_number != serial:
                 # If a special S/N is given, look for it.
                 continue
@@ -241,19 +462,24 @@ class EPOC(object):
                     raise EPOCDeviceNodeNotFoundError(
                         "/dev/emotiv_epoc doesn't exist.")
 
-            # Return the first Emotiv headset by default
+            # Return the first device by default
             break
 
-        self.setup_encryption()
-        # Attempt to see whether the headset is turned on
-        try:
-            self.endpoint.read(32, 100)
-        except usb.USBError as ue:
-            if ue.errno == 110:
-                self.headset_on = False
-                print("Setup is OK but make sure that headset is turned on.")
+        # Only setup encryption for Emotiv devices
+        if self.device_info and self.device_info['manufacturer'] and ("Emotiv" in self.device_info['manufacturer'] or "Nordic" in self.device_info['manufacturer']):
+            self.setup_encryption()
+            # Attempt to see whether the headset is turned on
+            try:
+                self.endpoint.read(32, 100)
+            except usb.USBError as ue:
+                if ue.errno == 110:
+                    self.headset_on = False
+                    print("Setup is OK but make sure that headset is turned on.")
+            else:
+                self.headset_on = True
         else:
-            self.headset_on = True
+            print("Non-Emotiv device detected. Encryption and protocol-specific features disabled.")
+            self.headset_on = True  # Assume device is ready
 
     def setup_encryption(self):
         """Generate the encryption key and setup Crypto module.

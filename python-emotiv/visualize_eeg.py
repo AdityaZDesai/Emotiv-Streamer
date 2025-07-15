@@ -79,7 +79,7 @@ def visualize_eeg(file_path):
 
 if __name__ == "__main__":
     # Visualize the first file
-    file_path = "emotiv-07-08-2025_18-31-33.mat"
+    file_path = "Emotiv_Systems_Inc.-EPOC_BCI-07-15-2025_12-29-44.mat"
     eeg_data, time_data, labels, fs = visualize_eeg(file_path)
     
     print(f"\nData loaded successfully!")
