@@ -15,8 +15,8 @@ MAT_FILE_PATH = 'emotiv-07-08-2025_18-31-33.mat'  # Make sure this file exists i
 EEG_CHANNEL_KEY = 'data'              # change if your .mat uses a different key
 TIME_KEY = 'time'                     # optional, depends on how time is stored
 FS = 128                              # sampling rate (Hz) — adjust based on your device
-LOWCUT = 1                            # Hz
-HIGHCUT = 10                          # Hz
+LOWCUT = 0.5                         # Hz
+HIGHCUT = 1                          # Hz
 FILTER_ORDER = 4
 
 # === BANDPASS FILTER ===
@@ -41,14 +41,41 @@ eeg_matrix = raw_data_struct['trial'][0, 0]  # shape: (14, N)
 time_vector = raw_data_struct['time'][0, 0].squeeze()  # shape: (N,)
 
 # === APPLY BANDPASS FILTER ===
+
 filtered = bandpass_filter(eeg_matrix, LOWCUT, HIGHCUT, FS, FILTER_ORDER)
+ARTIFACT_THRESHOLD = 10  # µV
+
+# Replace large spike values with NaN
+filtered_clean = filtered[0].copy()
+filtered_clean[abs(filtered_clean) > ARTIFACT_THRESHOLD] = float('nan')
 
 # === PLOT ===
 plt.figure(figsize=(12, 4))
-plt.plot(time_vector, filtered[0])  # Plot the first channel
-plt.title(f'Filtered EEG Signal ({LOWCUT}-{HIGHCUT} Hz)')
+plt.plot(time_vector, filtered_clean)  # Plot the cleaned signal for the first channel
+plt.title(f'Filtered & Cleaned EEG Signal ({LOWCUT}-{HIGHCUT} Hz, Threshold {ARTIFACT_THRESHOLD} µV)')
 plt.xlabel('Time (s)')
 plt.ylabel('Amplitude (µV)')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# === PLOT FFT OF FIRST CHANNEL ===
+import numpy as np
+
+# Remove NaNs for FFT calculation
+clean_segment = filtered_clean[~np.isnan(filtered_clean)]
+
+# Compute FFT
+fft_vals = np.fft.rfft(clean_segment)
+fft_freq = np.fft.rfftfreq(len(clean_segment), d=1./FS)
+power = np.abs(fft_vals)
+
+# Plot
+plt.figure(figsize=(10, 4))
+plt.plot(fft_freq, power)
+plt.title("Frequency Spectrum of Cleaned EEG Signal (First Channel)")
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("Power")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
