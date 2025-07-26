@@ -15,6 +15,13 @@ Frequency bands of interest:
 - Focused attention: 8 - 12 Hz (Alpha band)
 - Cognitive processing: 12 - 30 Hz (Beta band)
 - Noise: Frequencies outside the range of interest (e.g., below 0.5 Hz or above 30 Hz)
+
+
+
+Research:
+Decoding the cognitive states of attention and distraction in a real-life setting using EEG
+    https://www.nature.com/articles/s41598-022-24417-w
+
 '''
 
 import scipy.io
@@ -67,57 +74,56 @@ print("Raw EEG data struct content:", repr(raw_data_struct))
 eeg_matrix = raw_data_struct['trial'][0, 0]  # shape: (14, N)
 time_vector = raw_data_struct['time'][0, 0].squeeze()  # shape: (N,)
 
-# Filter for beta band (thinking)
-filtered_beta = bandpass_filter(eeg_matrix, LOWCUT, HIGHCUT, FS, FILTER_ORDER)
-filtered_beta_clean = dynamic_artifact_rejection(filtered_beta[0])
+from scipy.signal import resample
 
-# Plot
-plt.figure(figsize=(12, 4))
-plt.plot(time_vector, filtered_beta_clean)
-plt.title(f'Beta Band ({LOWCUT}-{HIGHCUT} Hz) EEG, Dynamic Artifact Rejection')
-plt.xlabel('Time (s)')
-plt.ylabel('Amplitude (µV)')
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+# Downsample data
+target_fs = 256
+downsample_factor = int(FS / target_fs) if FS > target_fs else 1
+if downsample_factor > 1:
+    eeg_matrix = resample(eeg_matrix, eeg_matrix.shape[1] // downsample_factor, axis=1)
+    time_vector = time_vector[::downsample_factor]
+    FS = target_fs
 
+# Broad bandpass filter for preprocessing
+PRE_LOW = 0.5
+PRE_HIGH = 45
+eeg_matrix = bandpass_filter(eeg_matrix, PRE_LOW, PRE_HIGH, FS, FILTER_ORDER)
 
-# === APPLY BANDPASS FILTER ===
+# ICA for artifact removal (placeholder)
+# from mne.preprocessing import ICA
+# ica = ICA(n_components=14, random_state=97)
+# ica.fit(eeg_matrix)  # EEG matrix should be structured as epochs for MNE
+# eeg_matrix = ica.apply(eeg_matrix)
 
-filtered = bandpass_filter(eeg_matrix, LOWCUT, HIGHCUT, FS, FILTER_ORDER)
-ARTIFACT_THRESHOLD = 10  # µV
-
-# Replace large spike values with NaN
-filtered_clean = filtered[0].copy()
-filtered_clean[abs(filtered_clean) > ARTIFACT_THRESHOLD] = float('nan')
-
-# === PLOT ===
-plt.figure(figsize=(12, 4))
-plt.plot(time_vector, filtered_clean)  # Plot the cleaned signal for the first channel
-plt.title(f'Filtered & Cleaned EEG Signal ({LOWCUT}-{HIGHCUT} Hz, Threshold {ARTIFACT_THRESHOLD} µV)')
-plt.xlabel('Time (s)')
-plt.ylabel('Amplitude (µV)')
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-
-# === PLOT FFT OF FIRST CHANNEL ===
 import numpy as np
 
-# Remove NaNs for FFT calculation
-clean_segment = filtered_clean[~np.isnan(filtered_clean)]
+# --- Hardcoded time window for analysis (17-26 seconds) ---
+start_time = 16
+end_time = 24
+start_idx = int(start_time * FS)
+end_idx = int(end_time * FS)
+segment = eeg_matrix[:, start_idx:end_idx]
 
-# Compute FFT
-fft_vals = np.fft.rfft(clean_segment)
-fft_freq = np.fft.rfftfreq(len(clean_segment), d=1./FS)
-power = np.abs(fft_vals)
+filtered_beta = bandpass_filter(segment, LOWCUT, HIGHCUT, FS, FILTER_ORDER)
+filtered_beta_clean = dynamic_artifact_rejection(filtered_beta[0])
 
-# Plot
-plt.figure(figsize=(10, 4))
-plt.plot(fft_freq, power)
-plt.title("Frequency Spectrum of Cleaned EEG Signal (First Channel)")
-plt.xlabel("Frequency (Hz)")
-plt.ylabel("Power")
+plt.figure(figsize=(12, 4))
+plt.plot(time_vector, eeg_matrix[0], label='Original EEG')
+plt.axvspan(start_time, end_time, color='orange', alpha=0.3, label='Selected Time Window')
+plt.title('Full EEG with Highlighted Analysis Window')
+plt.xlabel('Time (s)')
+plt.ylabel('Amplitude (µV)')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Plot Beta band component (cleaned) for the selected window
+plt.figure(figsize=(12, 5))
+plt.plot(time_vector[start_idx:end_idx], filtered_beta_clean, label='Beta Band (Cleaned)', linewidth=2)
+plt.title('Beta Band Component (Cleaned) in Selected Window')
+plt.xlabel('Time (s)')
+plt.ylabel('Amplitude (µV)')
 plt.grid(True)
 plt.tight_layout()
 plt.show()
