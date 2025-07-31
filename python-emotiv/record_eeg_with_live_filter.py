@@ -10,7 +10,7 @@ import time
 import datetime
 import signal
 import sys
-from scipy.fft import fft, fftfreq
+from scipy.signal import butter, filtfilt, lfilter
 from scipy.signal import butter, filtfilt, lfilter
 import matplotlib
 # Let matplotlib use its default backend - more reliable
@@ -49,95 +49,6 @@ except ImportError:
             clean[i:i+window] = seg
         return clean
 
-# === FFT-BASED NOISE FILTERING FUNCTIONS ===
-def fft_notch_filter(signal, fs, notch_freq=50, quality_factor=30):
-    """Remove specific frequency noise (e.g., power line interference) using FFT"""
-    # Apply FFT
-    fft_signal = fft(signal)
-    freqs = fftfreq(len(signal), 1/fs)
-    
-    # Create notch filter mask
-    bandwidth = notch_freq / quality_factor
-    mask = np.ones(len(freqs), dtype=bool)
-    
-    # Remove frequency around notch_freq
-    notch_indices = np.where((np.abs(freqs) >= notch_freq - bandwidth/2) & 
-                            (np.abs(freqs) <= notch_freq + bandwidth/2))[0]
-    mask[notch_indices] = False
-    
-    # Apply mask and inverse FFT
-    fft_signal[~mask] = 0
-    filtered_signal = np.real(np.fft.ifft(fft_signal))
-    
-    return filtered_signal
-
-def fft_spectral_subtraction(signal, fs, noise_floor_percentile=10):
-    """Remove noise using spectral subtraction in frequency domain"""
-    # Apply FFT
-    fft_signal = fft(signal)
-    magnitude = np.abs(fft_signal)
-    phase = np.angle(fft_signal)
-    
-    # Estimate noise floor (assume lowest 10% of frequencies contain mostly noise)
-    noise_floor = np.percentile(magnitude, noise_floor_percentile)
-    
-    # Spectral subtraction: reduce magnitude by estimated noise
-    alpha = 2.0  # Over-subtraction factor
-    cleaned_magnitude = magnitude - alpha * noise_floor
-    
-    # Ensure magnitude doesn't go negative (use half-wave rectification)
-    cleaned_magnitude = np.maximum(cleaned_magnitude, 0.1 * magnitude)
-    
-    # Reconstruct signal
-    cleaned_fft = cleaned_magnitude * np.exp(1j * phase)
-    cleaned_signal = np.real(np.fft.ifft(cleaned_fft))
-    
-    return cleaned_signal
-
-def fft_frequency_domain_filter(signal, fs, target_bands=None):
-    """Advanced frequency domain filtering for cognitive EEG bands"""
-    if target_bands is None:
-        # Focus on cognitive processing bands
-        target_bands = {
-            'alpha': (8, 12),   # Relaxed awareness, attention
-            'beta': (12, 30),   # Active thinking, focus
-            'theta': (4, 8)     # Memory, creativity (keep some)
-        }
-    
-    # Apply FFT
-    fft_signal = fft(signal)
-    freqs = fftfreq(len(signal), 1/fs)
-    magnitude = np.abs(fft_signal)
-    
-    # Create frequency mask for cognitive bands
-    mask = np.zeros(len(freqs), dtype=bool)
-    
-    for band_name, (low_freq, high_freq) in target_bands.items():
-        band_indices = np.where((np.abs(freqs) >= low_freq) & 
-                               (np.abs(freqs) <= high_freq))[0]
-        mask[band_indices] = True
-    
-    # Apply mask to preserve only cognitive frequencies
-    fft_filtered = fft_signal.copy()
-    fft_filtered[~mask] *= 0.1  # Attenuate rather than completely remove
-    
-    # Inverse FFT
-    filtered_signal = np.real(np.fft.ifft(fft_filtered))
-    
-    return filtered_signal, freqs, magnitude
-
-def remove_powerline_noise(signal, fs, powerline_freq=50):
-    """Remove power line noise (50Hz/60Hz) and harmonics using FFT"""
-    # Common power line frequencies and their harmonics
-    noise_freqs = [powerline_freq, powerline_freq*2, powerline_freq*3]
-    
-    filtered_signal = signal.copy()
-    
-    for freq in noise_freqs:
-        if freq < fs/2:  # Only filter frequencies below Nyquist
-            filtered_signal = fft_notch_filter(filtered_signal, fs, freq, quality_factor=50)
-    
-    return filtered_signal
 class LiveEEGFilter:
     """Real-time EEG filtering class using filter_data.py functions"""
     
@@ -155,7 +66,7 @@ class LiveEEGFilter:
         self.BETA_LOW = 12  # Changed to match filter_data.py (was 13)
         self.BETA_HIGH = 30
         self.GAMMA_LOW = 30
-        self.GAMMA_HIGH = 100
+        self.GAMMA_HIGH = 45
         
         # Artifact rejection parameters
         self.artifact_window = int(fs * 2)  # 2-second window
@@ -179,8 +90,8 @@ class LiveEEGFilter:
             'theta': (self.THETA_LOW, self.THETA_HIGH),
             'alpha': (self.ALPHA_LOW, self.ALPHA_HIGH),
             'beta': (self.BETA_LOW, self.BETA_HIGH),
-            'gamma': (self.GAMMA_LOW, min(self.GAMMA_HIGH, fs/2 * 0.9)),
-            'broadband': (0.5, min(50, fs/2 * 0.9))
+            'gamma': (self.GAMMA_LOW, 45),
+            'broadband': (0.5, min(45, fs/2 * 0.9))
         }
     
     def process_sample(self, raw_sample, channel=0):
@@ -195,10 +106,6 @@ class LiveEEGFilter:
         # If we have enough data, apply filtering to recent chunk
         if len(self.raw_buffer) >= self.artifact_window:
             recent_data = np.array(list(self.raw_buffer)[-self.artifact_window:])
-            
-            # First, remove power line noise (affects all bands)
-            recent_data = remove_powerline_noise(recent_data, self.fs, powerline_freq=60)  # US: 60Hz, EU: 50Hz
-            
             # Apply filtering for each band using filter_data.py functions
             for band, (low_freq, high_freq) in self.filters.items():
                 try:
@@ -214,13 +121,6 @@ class LiveEEGFilter:
                         clean_chunk = dynamic_artifact_rejection(
                             filtered_chunk, window=self.artifact_window//3, z_thresh=2.5
                         )
-                        
-                        # Additional FFT-based filtering for alpha band stability
-                        if len(clean_chunk) > 64:  # Need minimum samples for FFT
-                            clean_chunk = fft_frequency_domain_filter(
-                                clean_chunk, self.fs, 
-                                target_bands={'alpha': (8, 12)}
-                            )[0]
                     
                     elif band == 'beta':
                         # Beta: More sensitive to head movement and muscle artifacts
@@ -228,14 +128,6 @@ class LiveEEGFilter:
                         clean_chunk = dynamic_artifact_rejection(
                             filtered_chunk, window=self.artifact_window//4, z_thresh=2.0
                         )
-                        
-                        # Additional high-frequency noise removal for beta
-                        if len(clean_chunk) > 64:
-                            # Remove muscle artifact contamination (>30 Hz)
-                            clean_chunk = fft_frequency_domain_filter(
-                                clean_chunk, self.fs, 
-                                target_bands={'beta_clean': (12, 28)}  # Avoid 30+ Hz muscle artifacts
-                            )[0]
                     
                     else:
                         # Standard processing for other bands
