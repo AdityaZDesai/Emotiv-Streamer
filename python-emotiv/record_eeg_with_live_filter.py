@@ -132,7 +132,7 @@ def remove_powerline_noise(signal, fs, powerline_freq=50):
     noise_freqs = [powerline_freq, powerline_freq*2, powerline_freq*3]
     
     filtered_signal = signal.copy()
-    
+     
     for freq in noise_freqs:
         if freq < fs/2:  # Only filter frequencies below Nyquist
             filtered_signal = fft_notch_filter(filtered_signal, fs, freq, quality_factor=50)
@@ -277,13 +277,14 @@ class LiveEEGFilter:
                             filtered_chunk, window=self.artifact_window//4, z_thresh=2.0
                         )
                         
-                        # Additional high-frequency noise removal for beta
-                        if len(clean_chunk) > 64:
-                            # Remove muscle artifact contamination (>30 Hz)
-                            clean_chunk = fft_frequency_domain_filter(
-                                clean_chunk, self.fs, 
-                                target_bands={'beta_clean': (12, 28)}  # Avoid 30+ Hz muscle artifacts
-                            )[0]
+                       # Apply movement rejection
+                        clean_chunk = reject_movement_artifacts(
+                            clean_chunk, fs=self.fs,
+                            window_sec=1.0,
+                            rms_thresh=70.0,
+                            grad_thresh=50.0,
+                            attenuate_emg=True
+                        )
                     
                     else:
                         # Standard processing for other bands
