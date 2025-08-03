@@ -66,7 +66,7 @@ class LiveEEGFilter:
         self.BETA_LOW = 12  # Changed to match filter_data.py (was 13)
         self.BETA_HIGH = 30
         self.GAMMA_LOW = 30
-        self.GAMMA_HIGH = 45
+        self.GAMMA_HIGH = 50  # Low gamma for cognitive functions
         
         # Artifact rejection parameters
         self.artifact_window = int(fs * 2)  # 2-second window
@@ -200,13 +200,13 @@ class EEGRecorderWithFilter:
         self.start_time = None
         self.selected_device = None
         self.verbose_output = True
-        
+
         # Filtering setup
         self.sampling_rate = 128
         self.live_filter = LiveEEGFilter(fs=self.sampling_rate)
         self.enable_live_filtering = True
         self.active_filter_bands = ['raw', 'alpha', 'beta']  # Default bands to display
-        
+
         # FFT analysis buffers
         self.fft_buffer = []
         self.fft_frequencies = []
@@ -214,7 +214,7 @@ class EEGRecorderWithFilter:
         self.chunk_size = 128
         self.current_chunk = []
         self.chunk_start_time = None
-        
+
         # Live plotting variables
         self.live_plot_active = False
         self.plot_data_buffers = {band: [] for band in self.filtered_data_buffers.keys()}
@@ -224,6 +224,9 @@ class EEGRecorderWithFilter:
         self.axes = None
         self.lines = {}
         self.ani = None
+
+        # Accelerometer buffer for storing accel samples
+        self.accel_buffer = []
         
     def list_devices(self):
         """List all available EEG devices"""
@@ -411,26 +414,44 @@ class EEGRecorderWithFilter:
             print("-" * 80)
     
     def setup_live_plot_with_filters(self, channels):
-        """Setup the live plotting window with multiple filter displays"""
+        """Setup separate figure windows for each frequency band"""
         try:
             plt.ion()
             
-            # Create subplots for different frequency bands
-            num_bands = len(self.active_filter_bands)
-            self.fig, self.axes = plt.subplots(num_bands, 1, figsize=(15, 4 * num_bands))
-            
-            # Handle single subplot case
-            if num_bands == 1:
-                self.axes = [self.axes]
-            
-            self.fig.suptitle('Live EEG Data Stream with Real-time Filtering', fontsize=16)
-            
-            # Setup plot elements for each frequency band
+            # Create separate figures for each frequency band
+            self.figs = {}
+            self.axes = {}
             self.lines = {}
             colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
             
+            # Screen position offsets for each window
+            x_positions = [100, 300, 500, 700, 900]  # Horizontal positions
+            y_positions = [100, 150, 200, 250, 300]  # Vertical positions (slightly staggered)
+            
             for idx, band in enumerate(self.active_filter_bands):
-                ax = self.axes[idx]
+                # Create individual figure for each band
+                fig = plt.figure(figsize=(12, 6))
+                
+                # Position windows in a cascade pattern
+                x_pos = x_positions[idx % len(x_positions)]
+                y_pos = y_positions[idx % len(y_positions)]
+                
+                # Set window position (works on most backends)
+                try:
+                    manager = fig.canvas.manager
+                    if hasattr(manager, 'window'):
+                        if hasattr(manager.window, 'move'):
+                            manager.window.move(x_pos, y_pos)
+                        elif hasattr(manager.window, 'SetPosition'):
+                            manager.window.SetPosition((x_pos, y_pos))
+                except Exception:
+                    pass  # Window positioning might not work on all systems
+                
+                ax = fig.add_subplot(111)
+                
+                # Store figure and axis
+                self.figs[band] = fig
+                self.axes[band] = ax
                 self.lines[band] = []
                 
                 # Get channel names
@@ -442,33 +463,41 @@ class EEGRecorderWithFilter:
                 # Create lines for each channel
                 for i, channel in enumerate(channel_names):
                     color = colors[i % len(colors)]
-                    line, = ax.plot([], [], color=color, linewidth=1, 
-                                   label=f'{channel}', alpha=0.8)
+                    line, = ax.plot([], [], color=color, linewidth=1.5, 
+                                   label=f'{channel}', alpha=0.9)
                     self.lines[band].append(line)
                 
-                # Setup individual subplot
-                ax.set_xlabel('Time (s)')
-                ax.set_ylabel('Amplitude (μV)')
-                ax.set_title(f'{band.capitalize()} Band ({self.get_band_range(band)})')
+                # Setup individual plot
+                ax.set_xlabel('Time (s)', fontsize=12)
+                ax.set_ylabel('Amplitude (μV)', fontsize=12)
+                ax.set_title(f'{band.capitalize()} Band ({self.get_band_range(band)}) - Live EEG', 
+                           fontsize=14, fontweight='bold')
                 ax.grid(True, alpha=0.3)
-                ax.legend()
+                ax.legend(loc='upper right')
                 ax.set_xlim(0, self.plot_window_size)
                 ax.set_ylim(-100, 100)
-            
-            plt.tight_layout()
-            plt.show(block=False)
-            plt.pause(0.1)
-            
-            # Force the window to show
-            self.fig.canvas.draw()
-            self.fig.canvas.flush_events()
+                
+                # Style the plot
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_linewidth(0.5)
+                ax.spines['bottom'].set_linewidth(0.5)
+                
+                plt.tight_layout()
+                plt.show(block=False)
+                plt.pause(0.1)
+                
+                # Force the window to show
+                fig.canvas.draw()
+                fig.canvas.flush_events()
             
             self.live_plot_active = True
-            print("✓ Live filtering plot window opened")
-            print(f"✓ Displaying {len(self.active_filter_bands)} frequency bands: {', '.join(self.active_filter_bands)}")
+            print(f"✓ Created {len(self.active_filter_bands)} separate plot windows")
+            print(f"✓ Displaying frequency bands: {', '.join(self.active_filter_bands)}")
+            print("💡 Each band now has its own window for better visibility!")
             
         except Exception as e:
-            print(f"Warning: Could not setup live plotting window: {e}")
+            print(f"Warning: Could not setup live plotting windows: {e}")
             print("Live plotting will be disabled.")
             self.live_plot_active = False
     
@@ -480,13 +509,13 @@ class EEGRecorderWithFilter:
             'theta': '4-8 Hz', 
             'alpha': '8-12 Hz',
             'beta': '12-30 Hz',
-            'gamma': '30-100 Hz',
+            'gamma': '30-50 Hz (Low Gamma)',
             'broadband': '0.5-50 Hz'
         }
         return ranges.get(band, 'Unknown')
     
     def update_filtered_plot(self):
-        """Update the filtered EEG plot"""
+        """Update the filtered EEG plots in separate windows"""
         if not self.live_plot_active or not self.plot_time_buffer:
             return
         
@@ -502,9 +531,13 @@ class EEGRecorderWithFilter:
         
         window_times = [self.plot_time_buffer[i] for i in valid_indices]
         
-        # Update each frequency band subplot
-        for idx, band in enumerate(self.active_filter_bands):
-            ax = self.axes[idx]
+        # Update each frequency band in its own window
+        for band in self.active_filter_bands:
+            if band not in self.figs or band not in self.axes:
+                continue
+                
+            fig = self.figs[band]
+            ax = self.axes[band]
             ax.clear()
             
             if band in self.plot_data_buffers and self.plot_data_buffers[band]:
@@ -522,54 +555,65 @@ class EEGRecorderWithFilter:
                                 num_channels = window_data_arr.shape[1]
                                 colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
                                 
-                                print(f"Debug: Plotting {num_channels} channels for {band} band")
-                                
                                 for ch in range(min(num_channels, 8)):  # Limit to 8 channels for clarity
                                     color = colors[ch % len(colors)]
                                     ax.plot(window_times_arr, window_data_arr[:, ch], 
-                                           color=color, linewidth=1, label=f'Ch{ch+1}', alpha=0.8)
+                                           color=color, linewidth=1.5, label=f'Ch{ch+1}', alpha=0.9)
                             else:
                                 # Fallback for unexpected data structure
                                 ax.plot(window_times_arr, window_data_arr, 
-                                       color='blue', linewidth=1, alpha=0.8)
+                                       color='blue', linewidth=1.5, alpha=0.9)
                         except Exception as e:
                             print(f"Debug: Error plotting multi-channel data for {band}: {e}")
                             # Fallback: try to plot as single channel
                             try:
                                 window_data_flat = [item[0] if hasattr(item, '__len__') else item for item in window_data]
                                 ax.plot(window_times_arr, window_data_flat, 
-                                       color='blue', linewidth=1, alpha=0.8)
+                                       color='blue', linewidth=1.5, alpha=0.9)
                             except:
                                 print(f"Warning: Could not plot data for {band} band")
                     else:
                         # Single channel data
                         window_data_arr = np.array(window_data)
                         ax.plot(window_times_arr, window_data_arr, 
-                               color='blue', linewidth=1, alpha=0.8)
+                               color='blue', linewidth=1.5, alpha=0.9)
             
-            # Setup subplot
-            ax.set_xlabel('Time (s)')
-            ax.set_ylabel('Amplitude (μV)')  
-            ax.set_title(f'{band.capitalize()} Band ({self.get_band_range(band)}) - {current_time:.1f}s')
+            # Setup individual plot with enhanced styling
+            ax.set_xlabel('Time (s)', fontsize=12)
+            ax.set_ylabel('Amplitude (μV)', fontsize=12)  
+            ax.set_title(f'{band.capitalize()} Band ({self.get_band_range(band)}) - {current_time:.1f}s', 
+                        fontsize=14, fontweight='bold')
             ax.grid(True, alpha=0.3)
-            ax.legend()
+            ax.legend(loc='upper right')
             ax.set_xlim(time_window_start, current_time)
             
-            # Auto-adjust y-axis
+            # Style the plot
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_linewidth(0.5)
+            ax.spines['bottom'].set_linewidth(0.5)
+            
+            # Auto-adjust y-axis with better scaling
             if band in self.plot_data_buffers and self.plot_data_buffers[band]:
                 recent_data = self.plot_data_buffers[band][-100:]  # Last 100 samples
                 if recent_data:
-                    data_arr = np.array(recent_data)
-                    y_min = np.min(data_arr)
-                    y_max = np.max(data_arr) 
-                    y_range = y_max - y_min
-                    if y_range > 0:
-                        y_margin = y_range * 0.1
-                        ax.set_ylim(y_min - y_margin, y_max + y_margin)
-        
-        # Force redraw
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+                    try:
+                        data_arr = np.array(recent_data)
+                        if data_arr.size > 0:
+                            y_min = np.min(data_arr)
+                            y_max = np.max(data_arr) 
+                            y_range = y_max - y_min
+                            if y_range > 0:
+                                y_margin = y_range * 0.15  # Slightly larger margin
+                                ax.set_ylim(y_min - y_margin, y_max + y_margin)
+                            else:
+                                ax.set_ylim(-50, 50)  # Default range if no variation
+                    except Exception:
+                        ax.set_ylim(-100, 100)  # Fallback range
+            
+            # Force redraw for this specific figure
+            fig.canvas.draw()
+            fig.canvas.flush_events()
     
     def add_to_filtered_plot_buffer(self, raw_data, filtered_data, timestamp):
         """Add data to the plotting buffers for each frequency band"""
@@ -605,27 +649,28 @@ class EEGRecorderWithFilter:
                     self.plot_data_buffers[band].pop(0)
     
     def start_recording(self, duration=None):
-        """Start recording EEG data with live filtering"""
+        """Start recording EEG data with live filtering and accelerometer artifact rejection"""
         if not self.epoc:
             print("Headset not initialized!")
             return False
-        
+
         # Set up signal handler for Ctrl+C
         signal.signal(signal.SIGINT, self.signal_handler)
-        
+
         self.recording = True
         self.data_buffer = []
         for band in self.filtered_data_buffers:
             self.filtered_data_buffers[band] = []
         self.time_buffer = []
         self.start_time = time.time()
-        
+        self.accel_buffer = []
+
         print(f"\n{'='*80}")
         print("🎧 EEG Recording with Live Filtering Started!")
         print(f"{'='*80}")
         print("Recording EEG data from headset with real-time filtering...")
         print("Press Ctrl+C to stop recording and save data")
-        
+
         if self.enable_live_filtering:
             print(f"✓ Live filtering enabled:")
             print(f"  - Delta: {self.live_filter.DELTA_LOW}-{self.live_filter.DELTA_HIGH} Hz")
@@ -633,24 +678,24 @@ class EEGRecorderWithFilter:
             print(f"  - Alpha: {self.live_filter.ALPHA_LOW}-{self.live_filter.ALPHA_HIGH} Hz")
             print(f"  - Beta: {self.live_filter.BETA_LOW}-{self.live_filter.BETA_HIGH} Hz")
             print(f"  - Gamma: {self.live_filter.GAMMA_LOW}-{self.live_filter.GAMMA_HIGH} Hz")
-        
+
         if duration:
             print(f"Recording will automatically stop after {duration} seconds")
-        
+
         # Get channel information
         channels = None
         if hasattr(self.epoc, 'channels') and getattr(self.epoc, 'channels', None):
             channels = getattr(self.epoc, 'channels', None)
             print(f"Channels: {channels}")
-        
+
         print(f"Sampling rate: {self.sampling_rate} Hz")
         print(f"Start time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*80}")
-        
+
         # Setup live plotting if enabled
         if hasattr(self, 'enable_live_plot') and self.enable_live_plot:
             self.setup_live_plot_with_filters(channels)
-        
+
         try:
             sample_count = 0
             while self.recording:
@@ -660,36 +705,53 @@ class EEGRecorderWithFilter:
                     print(f"Error getting sample: {e}")
                     time.sleep(0.001)
                     continue
-                
-                if raw_data:  # Skip battery packets
+
+                # Get accelerometer data if available
+                accel_data = getattr(self.epoc, 'get_accel', lambda: None)()
+                self.accel_buffer.append(accel_data)
+
+                # Artifact rejection based on accelerometer
+                # If accel_data is available and above threshold, mark EEG as artifact (set to NaN)
+                if raw_data:
+                    if accel_data is not None:
+                        try:
+                            # If accel_data is a list/tuple/array of 3 values
+                            if isinstance(accel_data, (list, tuple, np.ndarray)) and len(accel_data) == 3:
+                                accel_magnitude = np.sqrt(sum([a**2 for a in accel_data]))
+                                if accel_magnitude > 1.5:
+                                    # Mark EEG sample as artifact (set to NaN)
+                                    if isinstance(raw_data, (list, np.ndarray)):
+                                        raw_data = [np.nan for _ in raw_data]
+                                    else:
+                                        raw_data = np.nan
+                        except Exception as e:
+                            print(f"Warning: Error computing accel magnitude: {e}")
+
                     current_time = time.time() - self.start_time
-                    
+
                     # Store raw data
                     self.data_buffer.append(raw_data)
                     self.time_buffer.append(current_time)
                     self.filtered_data_buffers['raw'].append(raw_data)
-                    
+
                     # Apply live filtering if enabled
                     filtered_results = {}
                     if self.enable_live_filtering:
                         # Handle single or multi-channel data
                         if isinstance(raw_data, (list, np.ndarray)) and hasattr(raw_data, '__len__'):
                             raw_list = raw_data.tolist() if hasattr(raw_data, 'tolist') else raw_data
-                            
+
                             # Process ALL channels
                             multi_channel_filtered = {}
                             for band in self.live_filter.filters.keys():
                                 multi_channel_filtered[band] = []
-                            
+
                             # Process each channel separately
                             for ch_idx, raw_sample in enumerate(raw_list):
-                                # Process all channels using filter_data.py functions
                                 ch_filtered = self.live_filter.process_sample(raw_sample, channel=ch_idx)
-                                
-                                # Collect results for each band
                                 for band, value in ch_filtered.items():
                                     multi_channel_filtered[band].append(value)
-                            
+
                             # Store multi-channel filtered results
                             filtered_results = multi_channel_filtered
                             for band, values in filtered_results.items():
@@ -699,25 +761,23 @@ class EEGRecorderWithFilter:
                             # Single channel data
                             raw_sample = raw_data
                             filtered_results = self.live_filter.process_sample(raw_sample, channel=0)
-                            
-                            # Store single channel filtered results
                             for band, value in filtered_results.items():
                                 if band in self.filtered_data_buffers:
                                     self.filtered_data_buffers[band].append(value)
-                    
+
                     # Add to plot buffers
                     if self.live_plot_active:
                         self.add_to_filtered_plot_buffer(raw_data, filtered_results, current_time)
-                        
+
                         # Update plot every 25 samples
                         if sample_count % 25 == 0:
                             try:
                                 self.update_filtered_plot()
                             except Exception as e:
                                 print(f"Plot update failed: {e}")
-                    
+
                     sample_count += 1
-                    
+
                     # Print real-time EEG data with channels (same format as record_eeg_data.py)
                     if self.verbose_output:
                         self.print_eeg_data(raw_data, channels, sample_count, current_time)
@@ -726,15 +786,15 @@ class EEGRecorderWithFilter:
                         if sample_count % 128 == 0:
                             elapsed = time.time() - self.start_time
                             print(f"Recording... {elapsed:.1f}s elapsed, {sample_count} samples collected")
-                    
+
                     # Check duration limit
                     if duration and current_time >= duration:
                         print(f"\nRecording duration ({duration}s) reached. Stopping...")
                         break
-                
+
                 # Small delay to prevent system overload
                 time.sleep(0.001)
-                
+
         except EPOCTurnedOffError:
             print("✗ Headset turned off during recording!")
             return False
@@ -743,44 +803,41 @@ class EEGRecorderWithFilter:
             return False
         except KeyboardInterrupt:
             print("\nRecording interrupted by user")
-        
+
         return True
     
     def stop_recording(self):
-        """Stop recording and save filtered data"""
+        """Stop recording and save filtered data and accelerometer values"""
         self.recording = False
-        
+
         if not self.data_buffer:
             print("No data recorded!")
             return
-        
+
         print(f"\n{'='*80}")
         print("📊 Recording Summary with Filtering")
         print(f"{'='*80}")
         print(f"Total samples: {len(self.data_buffer)}")
         print(f"Recording duration: {self.time_buffer[-1]:.2f} seconds")
         print(f"Raw data shape: {np.array(self.data_buffer).shape}")
-        
+
         if self.enable_live_filtering:
             print(f"Filtered bands processed:")
             for band in self.filtered_data_buffers:
                 if self.filtered_data_buffers[band]:
                     print(f"  - {band.capitalize()}: {len(self.filtered_data_buffers[band])} samples")
-        
+
         # Save data to .mat file
         timestamp = datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
-        
+
         device_name = "eeg_filtered"
-        if self.selected_device:
-            device_name = f"{self.selected_device['manufacturer'].replace(' ', '_')}-{self.selected_device['product'].replace(' ', '_')}_filtered"
-        
         filename = f"{device_name}-{timestamp}.mat"
-        
+
         # Create comprehensive data structure
         channels = None
         if hasattr(self.epoc, 'channels') and getattr(self.epoc, 'channels', None):
             channels = getattr(self.epoc, 'channels', None)
-        
+
         mat_data = {
             'data': {
                 'raw': {
@@ -803,7 +860,7 @@ class EEGRecorderWithFilter:
                 'artifact_threshold': self.live_filter.z_threshold
             }
         }
-        
+
         # Add filtered data if available
         if self.enable_live_filtering:
             for band in self.filtered_data_buffers:
@@ -815,7 +872,28 @@ class EEGRecorderWithFilter:
                         'fsample': self.sampling_rate,
                         'sampleinfo': np.array([1, len(self.time_buffer)])
                     }
-        
+
+        # Add accelerometer data if available
+        if self.accel_buffer and any([x is not None for x in self.accel_buffer]):
+            # Try to convert to numpy array, fill Nones with np.nan
+            accel_arr = []
+            for a in self.accel_buffer:
+                if a is None:
+                    accel_arr.append([np.nan, np.nan, np.nan])
+                elif isinstance(a, (list, tuple, np.ndarray)) and len(a) == 3:
+                    accel_arr.append(list(a))
+                else:
+                    # Unknown format, fill with nan
+                    accel_arr.append([np.nan, np.nan, np.nan])
+            accel_arr = np.array(accel_arr)
+            mat_data['data']['accel'] = {
+                'trial': accel_arr.T,
+                'time': np.array(self.time_buffer),
+                'label': np.array(['AccelX','AccelY','AccelZ']),
+                'fsample': self.sampling_rate,
+                'sampleinfo': np.array([1, len(self.time_buffer)])
+            }
+
         # Add device info if available
         if self.selected_device:
             mat_data['device_info'] = {
@@ -825,28 +903,133 @@ class EEGRecorderWithFilter:
                 'vendor_id': self.selected_device['vendor_id'],
                 'product_id': self.selected_device['product_id']
             }
-        
+
         try:
             scipy.io.savemat(filename, mat_data)
             print(f"✓ Filtered data saved to: {filename}")
-            
+
             # Calculate file size
             num_channels = 1
             if hasattr(self.data_buffer[0], '__len__'):
                 num_channels = len(self.data_buffer[0])
-            
+
             total_samples = len(self.data_buffer) * (len(self.filtered_data_buffers) if self.enable_live_filtering else 1)
             file_size_kb = total_samples * num_channels * 8 / 1024
             print(f"✓ File size: {file_size_kb:.1f} KB")
-            
+
             if self.enable_live_filtering:
                 print(f"✓ Includes {len([b for b in self.filtered_data_buffers if self.filtered_data_buffers[b]])} frequency bands")
-            
+
+            # Save additional formats for easy access
+            self.save_additional_formats(timestamp, channels)
+
         except Exception as e:
             print(f"✗ Failed to save data: {e}")
             return False
-        
+
         return True
+    
+    def save_additional_formats(self, timestamp, channels):
+        """Save data in multiple formats for easy local access"""
+        import json
+        import pandas as pd
+        
+        print(f"\n💾 Saving data in multiple formats for local access...")
+        
+        device_name = "eeg_filtered"
+        if self.selected_device:
+            device_name = f"{self.selected_device['manufacturer'].replace(' ', '_')}-{self.selected_device['product'].replace(' ', '_')}_filtered"
+        
+        try:
+            # 1. Save as CSV (easiest for Excel, Python pandas)
+            csv_filename = f"{device_name}-{timestamp}.csv"
+            
+            # Prepare data for CSV
+            csv_data = {
+                'timestamp': self.time_buffer,
+                'raw_data': [str(d) for d in self.data_buffer]  # Convert to string for CSV
+            }
+            
+            # Add filtered bands
+            if self.enable_live_filtering:
+                for band in ['delta', 'theta', 'alpha', 'beta', 'gamma']:
+                    if band in self.filtered_data_buffers and self.filtered_data_buffers[band]:
+                        csv_data[f'{band}_filtered'] = [str(d) for d in self.filtered_data_buffers[band]]
+            
+            df = pd.DataFrame(csv_data)
+            df.to_csv(csv_filename, index=False)
+            print(f"✓ CSV data saved to: {csv_filename}")
+            
+        except Exception as e:
+            print(f"Warning: Could not save CSV: {e}")
+        
+        try:
+            # 2. Save as JSON (human-readable, easy for web apps)
+            json_filename = f"{device_name}-{timestamp}.json"
+            
+            json_data = {
+                'metadata': {
+                    'recording_date': timestamp,
+                    'sampling_rate': self.sampling_rate,
+                    'duration_seconds': self.time_buffer[-1] if self.time_buffer else 0,
+                    'total_samples': len(self.data_buffer),
+                    'channels': channels if channels else ['EEG'],
+                    'frequency_bands': {
+                        'delta': '0.5-4 Hz',
+                        'theta': '4-8 Hz', 
+                        'alpha': '8-12 Hz',
+                        'beta': '12-30 Hz',
+                        'gamma': '30-50 Hz'
+                    }
+                },
+                'raw_data': {
+                    'timestamps': self.time_buffer,
+                    'samples': self.data_buffer[:1000]  # First 1000 samples for JSON (size limit)
+                }
+            }
+            
+            # Add filtered data samples
+            if self.enable_live_filtering:
+                json_data['filtered_data'] = {}
+                for band in ['delta', 'theta', 'alpha', 'beta', 'gamma']:
+                    if band in self.filtered_data_buffers and self.filtered_data_buffers[band]:
+                        json_data['filtered_data'][band] = self.filtered_data_buffers[band][:1000]  # First 1000 samples
+            
+            with open(json_filename, 'w') as f:
+                json.dump(json_data, f, indent=2, default=str)
+            print(f"✓ JSON metadata saved to: {json_filename}")
+            
+        except Exception as e:
+            print(f"Warning: Could not save JSON: {e}")
+        
+        try:
+            # 3. Save as NumPy compressed format (best for Python analysis)
+            npz_filename = f"{device_name}-{timestamp}.npz"
+            
+            npz_data = {
+                'timestamps': np.array(self.time_buffer),
+                'raw_data': np.array(self.data_buffer),
+                'sampling_rate': self.sampling_rate
+            }
+            
+            # Add filtered bands
+            if self.enable_live_filtering:
+                for band in ['delta', 'theta', 'alpha', 'beta', 'gamma']:
+                    if band in self.filtered_data_buffers and self.filtered_data_buffers[band]:
+                        npz_data[f'{band}_filtered'] = np.array(self.filtered_data_buffers[band])
+            
+            np.savez_compressed(npz_filename, **npz_data)
+            print(f"✓ NumPy compressed data saved to: {npz_filename}")
+            
+        except Exception as e:
+            print(f"Warning: Could not save NPZ: {e}")
+        
+        
+        print(f"\n🎉 All data formats saved! You can now:")
+        print(f"  - Open CSV in Excel/Google Sheets")
+        print(f"  - Load NPZ in Python for analysis")
+        print(f"  - View JSON for quick metadata")
+        print(f"  - Use MATLAB .mat file for complete analysis")
     
     def disconnect(self):
         """Disconnect from the headset"""
@@ -857,9 +1040,17 @@ class EEGRecorderWithFilter:
             except Exception as e:
                 print(f"Note: Error during disconnect: {e}")
         
-        # Clean up live plotting
+        # Clean up live plotting - close all separate figure windows
         if self.live_plot_active:
-            if self.fig:
+            if hasattr(self, 'figs') and self.figs:
+                for band, fig in self.figs.items():
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        pass
+                print(f"✓ Closed {len(self.figs)} live plotting windows")
+            elif hasattr(self, 'fig') and self.fig:
+                # Fallback for old single-figure setup
                 plt.close(self.fig)
                 print("✓ Live plotting window closed")
 
@@ -919,15 +1110,15 @@ def main():
         
         # Enable filtering by default but keep it in background
         recorder.enable_live_filtering = True
-        recorder.active_filter_bands = ['alpha', 'beta']  # Focus on cognitive bands
+        recorder.active_filter_bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']  # Plot all cognitive bands
         
-        print("\n📊 Why Alpha and Beta Bands?")
-        print("Alpha (8-12 Hz): Attention state, relaxed awareness")
-        print("  - LESS affected by head movement")
-        print("  - MORE affected by eye blinks and muscle tension")
+        print("\n📊 EEG Frequency Bands Being Plotted:")
+        print("Delta (0.5-4 Hz): Deep sleep, unconscious processes")
+        print("Theta (4-8 Hz): Memory, creativity, REM sleep")
+        print("Alpha (8-12 Hz): Relaxed awareness, attention state")
         print("Beta (12-30 Hz): Active thinking, cognitive processing")
-        print("  - MORE affected by head movement and muscle artifacts")
-        print("  - Direct indicator of mental effort and focus")
+        print("Low Gamma (30-50 Hz): High-level cognitive functions")
+        print("\n💾 All data will be saved locally for analysis")
         
         # Check if interactive plotting is available
         interactive_available = matplotlib.get_backend() not in ['Agg', 'PS', 'PDF', 'SVG']

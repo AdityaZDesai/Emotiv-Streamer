@@ -94,30 +94,30 @@ beta_signal = bandpass_filter(raw_signal, BETA_LOW, BETA_HIGH, FS, FILTER_ORDER)
 beta_clean = dynamic_artifact_rejection(beta_signal, window=int(FS*2), z_thresh=3)
 
 
-# === 5. PLOT RESULTS (Simulate Real-Time) ===
-plt.figure(figsize=(12, 4))
-plt.plot(time_vector, raw_signal, label='Raw EEG')
-plt.plot(time_vector, beta_clean, label='Beta Band (Cleaned)', linewidth=2)
-plt.title('EEG Channel {}: Raw vs. Beta Band (Cleaned)'.format(channel_idx))
-plt.xlabel('Time (s)')
-plt.ylabel('Amplitude (µV)')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+# # === 5. PLOT RESULTS (Simulate Real-Time) ===
+# plt.figure(figsize=(12, 4))
+# plt.plot(time_vector, raw_signal, label='Raw EEG')
+# plt.plot(time_vector, beta_clean, label='Beta Band (Cleaned)', linewidth=2)
+# plt.title('EEG Channel {}: Raw vs. Beta Band (Cleaned)'.format(channel_idx))
+# plt.xlabel('Time (s)')
+# plt.ylabel('Amplitude (µV)')
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.show()
 
-# --- Real-time simulation: plot in sliding windows ---
-window_sec = 2
-step_sec = 0.5
-window_samples = int(window_sec * FS)
-step_samples = int(step_sec * FS)
+# # --- Real-time simulation: plot in sliding windows ---
+# window_sec = 2
+# step_sec = 0.5
+# window_samples = int(window_sec * FS)
+# step_samples = int(step_sec * FS)
 
-plt.figure(figsize=(12, 4))
-for start in range(0, len(beta_clean) - window_samples, step_samples):
-    plt.clf()
-    plt.plot(time_vector[start:start+window_samples], beta_clean[start:start+window_samples])
-    plt.title(f'Real-Time Beta Band (Cleaned) [{time_vector[start]:.2f}-{time_vector[start+window_samples]:.2f}s]')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Amplitude (µV)')
-    plt.pause(0.05)
-plt.close()
+# plt.figure(figsize=(12, 4))
+# for start in range(0, len(beta_clean) - window_samples, step_samples):
+#     plt.clf()
+#     plt.plot(time_vector[start:start+window_samples], beta_clean[start:start+window_samples])
+#     plt.title(f'Real-Time Beta Band (Cleaned) [{time_vector[start]:.2f}-{time_vector[start+window_samples]:.2f}s]')
+#     plt.xlabel('Time (s)')
+#     plt.ylabel('Amplitude (µV)')
+#     plt.pause(0.05)
+# plt.close()
