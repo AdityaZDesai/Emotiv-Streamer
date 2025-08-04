@@ -1,4 +1,3 @@
-@ -0,0 +1,422 @@
 #!/usr/bin/env python3
 """
 View and analyze saved EEG data from record_eeg_with_live_filter.py
