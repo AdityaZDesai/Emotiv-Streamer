@@ -16,20 +16,32 @@ class EEGInterface {
     initializeChart() {
         const ctx = document.getElementById('eegChart').getContext('2d');
         
+        // Channel colors for multi-channel display
+        const channelColors = [
+            '#667eea',  // Blue
+            '#f093fb',  // Pink
+            '#4facfe',  // Light Blue
+            '#43e97b',  // Green
+            '#fa709a',  // Rose
+            '#fee140',  // Yellow
+            '#a8edea',  // Cyan
+            '#fed6e3'   // Light Pink
+        ];
+        
         this.chart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: [],
                 datasets: [{
-                    label: 'EEG Activity',
+                    label: 'Channel 1',
                     data: [],
-                    borderColor: '#667eea',
-                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.4,
+                    borderColor: channelColors[0],
+                    backgroundColor: channelColors[0] + '20',
+                    borderWidth: 1.5,
+                    fill: false,
+                    tension: 0.1,
                     pointRadius: 0,
-                    pointHoverRadius: 4
+                    pointHoverRadius: 3
                 }]
             },
             options: {
@@ -66,7 +78,15 @@ class EEGInterface {
                 },
                 plugins: {
                     legend: {
-                        display: false
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 10,
+                            font: {
+                                size: 11
+                            }
+                        }
                     },
                     tooltip: {
                         mode: 'index',
@@ -182,18 +202,30 @@ class EEGInterface {
             const response = await fetch('/api/data');
             const data = await response.json();
             
+            console.log('Received data:', data);
+            console.log('Current band:', this.currentBand);
+            
             // Update current values display
             Object.keys(data).forEach(band => {
                 const valueElement = document.getElementById(`${band}Value`);
                 if (valueElement && data[band].values.length > 0) {
                     const latestValue = data[band].values[data[band].values.length - 1];
-                    valueElement.textContent = latestValue.toFixed(2);
+                    // Handle multi-channel data - show average of all channels
+                    if (Array.isArray(latestValue)) {
+                        const avgValue = latestValue.reduce((sum, val) => sum + val, 0) / latestValue.length;
+                        valueElement.textContent = avgValue.toFixed(2);
+                    } else {
+                        valueElement.textContent = latestValue.toFixed(2);
+                    }
                 }
             });
             
             // Update chart if current band has data
             if (data[this.currentBand] && data[this.currentBand].values.length > 0) {
+                console.log('Updating chart with data:', data[this.currentBand]);
                 this.updateChart(data[this.currentBand]);
+            } else {
+                console.log('No data for current band or no values');
             }
             
         } catch (error) {
@@ -215,36 +247,128 @@ class EEGInterface {
     }
     
     updateChart(data) {
-        // Update chart with new data from polling - optimized for smooth updates
+        console.log('updateChart called with data:', data);
+        // Update chart with new data from polling - optimized for multi-channel display
         if (data.values && data.values.length > 0) {
-            // Always update for smoother experience
+            console.log('Data has values, length:', data.values.length);
+            // Clear existing data
             this.chart.data.labels = [];
-            this.chart.data.datasets[0].data = [];
             
-            // Add new data
-            data.values.forEach((value, index) => {
-                const time = data.timestamps[index] || index;
-                // Ensure time is a number and format it properly
-                const timeValue = typeof time === 'number' ? time : parseFloat(time) || index;
-                this.chart.data.labels.push(timeValue);
-                this.chart.data.datasets[0].data.push(value);
-            });
+            // Handle multi-channel data
+            if (Array.isArray(data.values[0])) {
+                // Multi-channel data - each element in data.values is a channel array
+                const numChannels = data.values.length;
+                
+                // Ensure we have enough datasets
+                while (this.chart.data.datasets.length < numChannels) {
+                    const channelIndex = this.chart.data.datasets.length;
+                    const channelColors = [
+                        '#667eea', '#f093fb', '#4facfe', '#43e97b', 
+                        '#fa709a', '#fee140', '#a8edea', '#fed6e3'
+                    ];
+                    
+                    this.chart.data.datasets.push({
+                        label: `Channel ${channelIndex + 1}`,
+                        data: [],
+                        borderColor: channelColors[channelIndex % channelColors.length],
+                        backgroundColor: channelColors[channelIndex % channelColors.length] + '20',
+                        borderWidth: 1.5,
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        pointHoverRadius: 3
+                    });
+                }
+                
+                // Remove extra datasets if we have fewer channels now
+                this.chart.data.datasets.splice(numChannels);
+                
+                // Add data for each channel
+                for (let ch = 0; ch < numChannels; ch++) {
+                    this.chart.data.datasets[ch].data = [];
+                    
+                    data.values[ch].forEach((value, index) => {
+                        const time = data.timestamps[index] || index;
+                        const timeValue = typeof time === 'number' ? time : parseFloat(time) || index;
+                        
+                        if (ch === 0) { // Only add time labels once
+                            this.chart.data.labels.push(timeValue);
+                        }
+                        this.chart.data.datasets[ch].data.push(value);
+                    });
+                }
+            } else {
+                // Single channel data
+                this.chart.data.datasets[0].data = [];
+                data.values.forEach((value, index) => {
+                    const time = data.timestamps[index] || index;
+                    const timeValue = typeof time === 'number' ? time : parseFloat(time) || index;
+                    this.chart.data.labels.push(timeValue);
+                    this.chart.data.datasets[0].data.push(value);
+                });
+            }
             
             this.chart.update('none');
         }
     }
     
     addDataPoint(value, timestamp) {
-        // Use the actual timestamp from the server data
+        // Handle multi-channel data
         const timeValue = typeof timestamp === 'number' ? timestamp : parseFloat(timestamp) || 0;
         
+        // Add time label
         this.chart.data.labels.push(timeValue);
-        this.chart.data.datasets[0].data.push(value);
         
-        // Keep only last 500 points (to show ~20 seconds of data)
+        // Handle multi-channel values
+        if (Array.isArray(value)) {
+            // Multi-channel data
+            const numChannels = value.length;
+            
+            // Ensure we have enough datasets
+            while (this.chart.data.datasets.length < numChannels) {
+                const channelIndex = this.chart.data.datasets.length;
+                const channelColors = [
+                    '#667eea', '#f093fb', '#4facfe', '#43e97b', 
+                    '#fa709a', '#fee140', '#a8edea', '#fed6e3'
+                ];
+                
+                this.chart.data.datasets.push({
+                    label: `Channel ${channelIndex + 1}`,
+                    data: [],
+                    borderColor: channelColors[channelIndex % channelColors.length],
+                    backgroundColor: channelColors[channelIndex % channelColors.length] + '20',
+                    borderWidth: 1.5,
+                    fill: false,
+                    tension: 0.1,
+                    pointRadius: 0,
+                    pointHoverRadius: 3
+                });
+            }
+            
+            // Add data for each channel
+            for (let ch = 0; ch < numChannels; ch++) {
+                if (this.chart.data.datasets[ch]) {
+                    this.chart.data.datasets[ch].data.push(value[ch]);
+                    
+                    // Keep only last 500 points per channel
+                    if (this.chart.data.datasets[ch].data.length > 500) {
+                        this.chart.data.datasets[ch].data.shift();
+                    }
+                }
+            }
+        } else {
+            // Single channel data
+            this.chart.data.datasets[0].data.push(value);
+            
+            // Keep only last 500 points
+            if (this.chart.data.datasets[0].data.length > 500) {
+                this.chart.data.datasets[0].data.shift();
+            }
+        }
+        
+        // Keep only last 500 time labels
         if (this.chart.data.labels.length > 500) {
             this.chart.data.labels.shift();
-            this.chart.data.datasets[0].data.shift();
         }
         
         this.chart.update('none');
@@ -264,8 +388,15 @@ class EEGInterface {
         // Update chart title
         this.chart.options.plugins.title = {
             display: true,
-            text: `${band.toUpperCase()} Band EEG Activity`
+            text: `${band.toUpperCase()} Band EEG Activity - Multi-Channel View`
         };
+        
+        // Update legend visibility based on band
+        if (band === 'raw') {
+            this.chart.options.plugins.legend.display = true; // Show legend for multi-channel raw data
+        } else {
+            this.chart.options.plugins.legend.display = false; // Hide legend for filtered bands
+        }
         
         // Update chart
         this.chart.update();
@@ -358,7 +489,12 @@ class EEGInterface {
     resetChart() {
         // Clear chart data and reset for new recording
         this.chart.data.labels = [];
-        this.chart.data.datasets[0].data = [];
+        
+        // Clear all datasets (for multi-channel support)
+        this.chart.data.datasets.forEach(dataset => {
+            dataset.data = [];
+        });
+        
         this.chart.update('none');
     }
 }

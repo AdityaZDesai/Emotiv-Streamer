@@ -134,8 +134,8 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                         # Simplified filtering - just store raw data for now
                         # We'll do proper filtering on the frontend or in post-processing
                         if isinstance(raw_data, (list, np.ndarray)) and hasattr(raw_data, '__len__'):
-                            # Multi-channel: use first channel for simplicity
-                            raw_sample = raw_data[0] if len(raw_data) > 0 else 0.0
+                            # Multi-channel: use ALL channels
+                            raw_sample = raw_data  # Keep all channels
                         else:
                             raw_sample = raw_data
                         
@@ -182,25 +182,40 @@ def data_callback(band, data, timestamp):
     """Optimized callback function to send EEG data to Flask"""
     global plot_data, timestamps, recording_start_time
     
+    # Debug: Print data structure for first few samples
+    if len(plot_data.get(band, [])) < 5:
+        print(f"🔍 DEBUG {band}: data type={type(data)}, length={len(data) if hasattr(data, '__len__') else 'N/A'}")
+        if isinstance(data, (list, np.ndarray)) and len(data) > 0:
+            print(f"🔍 DEBUG {band}: data[0] type={type(data[0])}, value={data[0]}")
+    
     # Convert data to a format that can be serialized
     if isinstance(data, (list, np.ndarray)):
         if len(data) > 0:
-            # For multi-channel data, take the first channel for simplicity
+            # For multi-channel data, store all channels
             if isinstance(data[0], (list, np.ndarray)):
-                data_value = float(data[0][0]) if len(data[0]) > 0 else 0.0
+                # Multi-channel data - store as list of values
+                data_values = []
+                for ch in data:
+                    if isinstance(ch, (list, np.ndarray)) and len(ch) > 0:
+                        data_values.append(float(ch))  # Use the channel value directly
+                    else:
+                        data_values.append(float(ch) if ch is not None else 0.0)
             else:
-                data_value = float(data[0])
+                # Multi-channel data (list of numbers) - store all channels
+                data_values = []
+                for value in data:
+                    data_values.append(float(value) if value is not None else 0.0)
         else:
-            data_value = 0.0
+            data_values = [0.0]
     else:
-        data_value = float(data) if data is not None else 0.0
+        data_values = [float(data) if data is not None else 0.0]
     
     # Only print every 100th sample to reduce console spam
     if len(plot_data.get(band, [])) % 100 == 0:
-        print(f"📊 Data callback: {band} = {data_value:.2f}")
+        print(f"📊 Data callback: {band} = {data_values[:3]}... (channels: {len(data_values)})")
     
     if band in plot_data:
-        plot_data[band].append(data_value)
+        plot_data[band].append(data_values)
         if len(plot_data[band]) > 1000:  # Keep last 1000 samples (about 20 seconds at 50Hz effective rate)
             plot_data[band].pop(0)
     
@@ -220,7 +235,7 @@ def data_callback(band, data, timestamp):
         try:
             data_queue.put_nowait({
                 'band': band,
-                'data': data_value,
+                'data': data_values,
                 'timestamp': timestamps[-1]  # Use relative timestamp
             })
         except queue.Full:
@@ -454,10 +469,33 @@ def get_data():
             sampled_values = values[::1]  # Send every sample for maximum smoothness
             sampled_timestamps = timestamps[::1] if timestamps else []
             
-            data[band] = {
-                'values': sampled_values[-1000:],  # Last 1000 samples (about 20 seconds)
-                'timestamps': sampled_timestamps[-1000:] if sampled_timestamps else []
-            }
+            # For multi-channel data, we need to transpose the data
+            if sampled_values and isinstance(sampled_values[0], list):
+                # Multi-channel data - transpose to get channels as separate arrays
+                num_channels = len(sampled_values[0]) if sampled_values[0] else 1
+                channel_data = [[] for _ in range(num_channels)]
+                
+                for sample in sampled_values[-1000:]:  # Last 1000 samples
+                    if isinstance(sample, list):
+                        for ch_idx, ch_value in enumerate(sample):
+                            if ch_idx < num_channels:
+                                channel_data[ch_idx].append(ch_value)
+                    else:
+                        # Fallback for single value
+                        channel_data[0].append(sample)
+                
+                data[band] = {
+                    'values': channel_data,  # Array of arrays, one per channel
+                    'timestamps': sampled_timestamps[-1000:] if sampled_timestamps else [],
+                    'channels': num_channels
+                }
+            else:
+                # Single channel data
+                data[band] = {
+                    'values': [sampled_values[-1000:]],  # Wrap in array for consistency
+                    'timestamps': sampled_timestamps[-1000:] if sampled_timestamps else [],
+                    'channels': 1
+                }
     
     return jsonify(data)
 
