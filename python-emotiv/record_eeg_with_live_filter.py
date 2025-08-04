@@ -21,6 +21,7 @@ import matplotlib.animation as animation
 from matplotlib.widgets import Button
 from emotiv.epoc import EPOC, EPOCTurnedOffError, EPOCUSBError
 from collections import deque
+import random
 
 # Import filtering functions from filter_data.py
 try:
@@ -48,6 +49,117 @@ except ImportError:
             seg[np.abs(z) > z_thresh] = np.nan
             clean[i:i+window] = seg
         return clean
+
+class EEGEmulator:
+    """Emulates EEG data for testing when no physical headset is available"""
+    
+    def __init__(self, sampling_rate=128, num_channels=14):
+        self.sampling_rate = sampling_rate
+        self.num_channels = num_channels
+        self.start_time = time.time()
+        self.sample_count = 0
+        
+        # Channel names (standard Emotiv EPOC channels)
+        self.channels = ["F3", "FC5", "AF3", "F7", "T7", "P7", "O1",
+                        "O2", "P8", "T8", "F8", "AF4", "FC6", "F4"]
+        
+        # Initialize signal generators for each channel
+        self.signal_generators = []
+        for i in range(num_channels):
+            # Each channel gets different base frequencies and amplitudes
+            base_freq = 10 + i * 0.5  # Varying base frequencies
+            amplitude = 20 + i * 2    # Varying amplitudes
+            phase = i * np.pi / 7     # Different phases
+            self.signal_generators.append({
+                'base_freq': base_freq,
+                'amplitude': amplitude,
+                'phase': phase,
+                'noise_level': 5 + i * 0.5
+            })
+        
+        # Simulate different brain states over time
+        self.brain_state = 'relaxed'  # relaxed, focused, drowsy, active
+        self.state_start_time = time.time()
+        self.state_duration = 10  # Change state every 10 seconds
+        
+        print(f"✓ EEG Emulator initialized with {num_channels} channels")
+        print(f"✓ Sampling rate: {sampling_rate} Hz")
+        print(f"✓ Channels: {self.channels[:num_channels]}")
+    
+    def _generate_brain_signal(self, channel_idx, t):
+        """Generate realistic brain signal for a specific channel"""
+        gen = self.signal_generators[channel_idx]
+        
+        # Base signal components
+        alpha_signal = gen['amplitude'] * 0.3 * np.sin(2 * np.pi * 10 * t + gen['phase'])
+        beta_signal = gen['amplitude'] * 0.2 * np.sin(2 * np.pi * 20 * t + gen['phase'] * 1.5)
+        theta_signal = gen['amplitude'] * 0.15 * np.sin(2 * np.pi * 6 * t + gen['phase'] * 0.7)
+        delta_signal = gen['amplitude'] * 0.1 * np.sin(2 * np.pi * 2 * t + gen['phase'] * 0.3)
+        
+        # Add some gamma activity
+        gamma_signal = gen['amplitude'] * 0.05 * np.sin(2 * np.pi * 40 * t + gen['phase'] * 2)
+        
+        # Combine signals based on brain state
+        if self.brain_state == 'relaxed':
+            # High alpha, low beta
+            signal = alpha_signal * 1.5 + beta_signal * 0.5 + theta_signal + delta_signal + gamma_signal * 0.3
+        elif self.brain_state == 'focused':
+            # High beta, moderate alpha
+            signal = alpha_signal * 0.8 + beta_signal * 1.8 + theta_signal * 0.7 + delta_signal + gamma_signal * 0.8
+        elif self.brain_state == 'drowsy':
+            # High theta, low alpha/beta
+            signal = alpha_signal * 0.3 + beta_signal * 0.2 + theta_signal * 2.0 + delta_signal * 1.5 + gamma_signal * 0.1
+        else:  # active
+            # Balanced but higher overall activity
+            signal = alpha_signal * 1.2 + beta_signal * 1.4 + theta_signal * 0.8 + delta_signal * 0.6 + gamma_signal * 1.0
+        
+        # Add realistic noise
+        noise = np.random.normal(0, gen['noise_level'])
+        
+        # Add occasional artifacts (blinks, muscle activity)
+        if random.random() < 0.01:  # 1% chance of blink artifact
+            signal += 50 * np.exp(-((t % 0.5) - 0.25)**2 / 0.01)  # Blink artifact
+        
+        if random.random() < 0.005:  # 0.5% chance of muscle artifact
+            signal += 30 * np.sin(2 * np.pi * 60 * t)  # High-frequency muscle artifact
+        
+        return signal + noise
+    
+    def _update_brain_state(self):
+        """Update brain state periodically to simulate realistic changes"""
+        current_time = time.time()
+        if current_time - self.state_start_time > self.state_duration:
+            states = ['relaxed', 'focused', 'drowsy', 'active']
+            self.brain_state = random.choice(states)
+            self.state_start_time = current_time
+            self.state_duration = random.uniform(8, 15)  # Random duration
+            print(f"🧠 Brain state changed to: {self.brain_state}")
+    
+    def get_sample(self):
+        """Get a single sample of emulated EEG data"""
+        self._update_brain_state()
+        
+        t = self.sample_count / self.sampling_rate
+        sample_data = []
+        
+        for i in range(self.num_channels):
+            signal_value = self._generate_brain_signal(i, t)
+            sample_data.append(signal_value)
+        
+        self.sample_count += 1
+        return sample_data
+    
+    def get_accel(self):
+        """Get emulated accelerometer data"""
+        # Simulate occasional head movements
+        if random.random() < 0.02:  # 2% chance of movement
+            return [random.uniform(-2, 2), random.uniform(-2, 2), random.uniform(-2, 2)]
+        else:
+            return [random.uniform(-0.1, 0.1), random.uniform(-0.1, 0.1), random.uniform(-0.1, 0.1)]
+    
+    def disconnect(self):
+        """Clean up emulator"""
+        print("✓ EEG Emulator disconnected")
 
 class LiveEEGFilter:
     """Real-time EEG filtering class using filter_data.py functions"""
@@ -258,23 +370,29 @@ class EEGRecorderWithFilter:
             return []
     
     def select_device(self):
-        """Interactive device selection"""
+        """Interactive device selection with automatic emulator fallback"""
         print("🎧 EEG Device Selection")
         print("="*50)
         
         devices = self.list_devices()
+        
+        # If no devices found, automatically use emulator
         if not devices:
-            return None
+            print("\n⚠️ No USB devices detected!")
+            print("🤖 Automatically switching to EEG Emulator mode")
+            print("This will generate realistic EEG data for testing")
+            return "emulator"
         
         print("\nOptions:")
         print("1. Automatically select device")
         print("2. Manually select device") 
         print("3. Use default Emotiv detection")
-        print("4. Cancel")
+        print("4. Use EEG Emulator (for testing)")
+        print("5. Cancel")
         
         while True:
             try:
-                choice = int(input("\nSelect option (1-4): "))
+                choice = int(input("\nSelect option (1-5): "))
                 
                 if choice == 1:
                     eeg_devices = [d for d in devices if d['is_eeg']]
@@ -301,6 +419,11 @@ class EEGRecorderWithFilter:
                     return "default"
                     
                 elif choice == 4:
+                    print("🤖 Using EEG Emulator mode")
+                    print("This will generate realistic EEG data for testing")
+                    return "emulator"
+                    
+                elif choice == 5:
                     return None
                     
                 else:
@@ -310,7 +433,7 @@ class EEGRecorderWithFilter:
                 print("Please enter a valid number.")
     
     def setup_headset(self):
-        """Initialize the EEG headset"""
+        """Initialize the EEG headset or emulator"""
         device_choice = self.select_device()
         
         if device_choice is None:
@@ -318,17 +441,30 @@ class EEGRecorderWithFilter:
             return False
         
         print(f"\n{'='*60}")
-        print("🎧 Initializing EEG Headset...")
+        print("🎧 Initializing EEG Device...")
         print(f"{'='*60}")
         
-        if device_choice == "default":
+        if device_choice == "emulator":
+            print("🤖 Initializing EEG Emulator...")
+            self.epoc = EEGEmulator(sampling_rate=self.sampling_rate, num_channels=14)
+            self.emulator_mode = True
+            print("✓ EEG Emulator initialized successfully!")
+            
+            # Set channels from emulator
+            if hasattr(self.epoc, 'channels'):
+                self.channels = self.epoc.channels
+                print(f"Channels: {self.channels}")
+            
+        elif device_choice == "default":
             print("Using default Emotiv device detection...")
             self.epoc = EPOC()
+            self.emulator_mode = False
         else:
             print(f"Connecting to: {device_choice['manufacturer']} - {device_choice['product']}")
             self.epoc = EPOC(device_info=device_choice)
+            self.emulator_mode = False
         
-        print("✓ Headset initialized successfully!")
+        print("✓ Device initialized successfully!")
         
         # Update sampling rate if available
         if hasattr(self.epoc, 'sampling_rate') and getattr(self.epoc, 'sampling_rate', None):
@@ -342,7 +478,7 @@ class EEGRecorderWithFilter:
             print(f"Channels: {getattr(self.epoc, 'channels', [])}")
         print(f"Sampling rate: {self.sampling_rate} Hz")
         
-        if self.selected_device:
+        if self.selected_device and not self.emulator_mode:
             print(f"Device: {self.selected_device['manufacturer']} - {self.selected_device['product']}")
             print(f"Serial: {self.selected_device['serial']}")
             print(f"VID:PID: {self.selected_device['vendor_id']}:{self.selected_device['product_id']}")
@@ -668,7 +804,14 @@ class EEGRecorderWithFilter:
         print(f"\n{'='*80}")
         print("🎧 EEG Recording with Live Filtering Started!")
         print(f"{'='*80}")
-        print("Recording EEG data from headset with real-time filtering...")
+        
+        if hasattr(self, 'emulator_mode') and self.emulator_mode:
+            print("🤖 Recording from EEG Emulator with realistic brain state simulation...")
+            print("💡 The emulator will automatically change brain states every 8-15 seconds")
+            print("🧠 States: relaxed, focused, drowsy, active")
+        else:
+            print("Recording EEG data from headset with real-time filtering...")
+        
         print("Press Ctrl+C to stop recording and save data")
 
         if self.enable_live_filtering:
@@ -707,7 +850,10 @@ class EEGRecorderWithFilter:
                     continue
 
                 # Get accelerometer data if available
-                accel_data = getattr(self.epoc, 'get_accel', lambda: None)()
+                if hasattr(self.epoc, 'get_accel'):
+                    accel_data = self.epoc.get_accel()
+                else:
+                    accel_data = None
                 self.accel_buffer.append(accel_data)
 
                 # Artifact rejection based on accelerometer
@@ -895,7 +1041,17 @@ class EEGRecorderWithFilter:
             }
 
         # Add device info if available
-        if self.selected_device:
+        if hasattr(self, 'emulator_mode') and self.emulator_mode:
+            mat_data['device_info'] = {
+                'manufacturer': 'EEG Emulator',
+                'product': 'Simulated EEG Data',
+                'serial': 'EMU-001',
+                'vendor_id': '0000',
+                'product_id': '0000',
+                'emulator_mode': True,
+                'brain_states_simulated': ['relaxed', 'focused', 'drowsy', 'active']
+            }
+        elif self.selected_device:
             mat_data['device_info'] = {
                 'manufacturer': self.selected_device['manufacturer'],
                 'product': self.selected_device['product'],
@@ -937,7 +1093,9 @@ class EEGRecorderWithFilter:
         print(f"\n💾 Saving data in multiple formats for local access...")
         
         device_name = "eeg_filtered"
-        if self.selected_device:
+        if hasattr(self, 'emulator_mode') and self.emulator_mode:
+            device_name = "EEG_Emulator_filtered"
+        elif self.selected_device:
             device_name = f"{self.selected_device['manufacturer'].replace(' ', '_')}-{self.selected_device['product'].replace(' ', '_')}_filtered"
         
         try:
@@ -1032,11 +1190,15 @@ class EEGRecorderWithFilter:
         print(f"  - Use MATLAB .mat file for complete analysis")
     
     def disconnect(self):
-        """Disconnect from the headset"""
+        """Disconnect from the headset or emulator"""
         if self.epoc:
             try:
-                self.epoc.disconnect()
-                print("✓ Headset disconnected")
+                if hasattr(self, 'emulator_mode') and self.emulator_mode:
+                    self.epoc.disconnect()
+                    print("✓ EEG Emulator disconnected")
+                else:
+                    self.epoc.disconnect()
+                    print("✓ Headset disconnected")
             except Exception as e:
                 print(f"Note: Error during disconnect: {e}")
         
@@ -1092,6 +1254,7 @@ def main():
     print("="*50)
     print("Supports multiple EEG headsets including Emotiv, OpenBCI, Muse, and others")
     print("With real-time cognitive filtering for focus and attention analysis")
+    print("🤖 Includes EEG Emulator for testing without physical hardware")
     
     recorder = EEGRecorderWithFilter()
     
@@ -1110,9 +1273,10 @@ def main():
         
         # Enable filtering by default but keep it in background
         recorder.enable_live_filtering = True
-        recorder.active_filter_bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']  # Plot all cognitive bands
+        recorder.active_filter_bands = ['raw', 'delta', 'theta', 'alpha', 'beta', 'gamma']  # Plot all bands including raw
         
         print("\n📊 EEG Frequency Bands Being Plotted:")
+        print("Raw (Unfiltered): All original EEG activity")
         print("Delta (0.5-4 Hz): Deep sleep, unconscious processes")
         print("Theta (4-8 Hz): Memory, creativity, REM sleep")
         print("Alpha (8-12 Hz): Relaxed awareness, attention state")
