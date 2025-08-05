@@ -1,58 +1,49 @@
-from flask import Flask, render_template, jsonify, request, Response, stream_template
-import threading
-import time
-import json
-import os
+#!/usr/bin/env python3
+"""
+Flask API for EEG Recording Interface
+Backend API only - frontend will be Next.js
+"""
+
 import sys
-from datetime import datetime
-import datetime as dt
+import os
+sys.path.append('python-emotiv')
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import threading
 import queue
-import base64
-import io
+import time
+import datetime
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
-# Add the python-emotiv directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'python-emotiv'))
-
-# Import the EEG recorder
 from record_eeg_with_live_filter import EEGRecorderWithFilter, EEGEmulator
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for Next.js frontend
 
-# Global variables for EEG recording
+# Global variables for EEG recorder state
 eeg_recorder = None
-recording_thread = None
 recording_active = False
-data_queue = queue.Queue()
-plot_data = {
-    'raw': [],
-    'delta': [],
-    'theta': [],
-    'alpha': [],
-    'beta': [],
-    'gamma': []
-}
+data_queue = queue.Queue(maxsize=1000)
+plot_data = {'raw': [], 'alpha': [], 'beta': [], 'delta': [], 'theta': [], 'gamma': []}
 timestamps = []
 recording_start_time = None
 
 class FlaskEEGRecorder(EEGRecorderWithFilter):
-    """Optimized EEG Recorder for Flask - No heavy filtering or plotting"""
+    """Flask-optimized EEG recorder with simplified processing"""
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.data_callback = None
-        # Disable heavy operations for web streaming
-        self.enable_live_plot = False  # No matplotlib plotting
-        self.verbose_output = False    # No console spam
+        self.enable_live_plot = False  # Disable matplotlib plotting for web
+        self.verbose_output = False  # Reduce console output
         
     def set_data_callback(self, callback):
-        """Set callback function to send data to Flask"""
+        """Set callback function for data streaming"""
         self.data_callback = callback
-        
+    
     def add_to_filtered_plot_buffer(self, raw_data, filtered_data, timestamp):
         """Override to send data to Flask - simplified version"""
         # Call the parent method first
@@ -100,7 +91,7 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
             channels = getattr(self.epoc, 'channels', None)
 
         print(f"Sampling rate: {self.sampling_rate} Hz")
-        print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Start time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*80}")
 
         try:
@@ -153,13 +144,13 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                             if band in self.filtered_data_buffers:
                                 self.filtered_data_buffers[band].append(value)
 
-                    # Send to Flask callback
+                    # Add to plot buffers for web streaming
                     if self.data_callback:
                         self.add_to_filtered_plot_buffer(raw_data, filtered_results, current_time)
 
                     sample_count += 1
 
-                    # Print progress every 128 samples (1 second)
+                    # Print progress every 128 samples (approximately 1 second for 128Hz)
                     if sample_count % 128 == 0:
                         elapsed = time.time() - self.start_time
                         print(f"Recording... {elapsed:.1f}s elapsed, {sample_count} samples collected")
@@ -169,11 +160,11 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                         print(f"\nRecording duration ({duration}s) reached. Stopping...")
                         break
 
-                # Minimal delay - removed heavy sleep
-                time.sleep(0.0001)  # 0.1ms instead of 1ms
+                # Minimal delay for maximum responsiveness
+                time.sleep(0.00001)  # 10 microseconds for ultra-smooth updates
 
         except Exception as e:
-            print(f"Recording error: {e}")
+            print(f"Error during recording: {e}")
             return False
 
         return True
@@ -210,13 +201,13 @@ def data_callback(band, data, timestamp):
     else:
         data_values = [float(data) if data is not None else 0.0]
     
-    # Only print every 100th sample to reduce console spam
-    if len(plot_data.get(band, [])) % 100 == 0:
+    # Only print every 500th sample to reduce console spam
+    if len(plot_data.get(band, [])) % 500 == 0:
         print(f"📊 Data callback: {band} = {data_values[:3]}... (channels: {len(data_values)})")
     
     if band in plot_data:
         plot_data[band].append(data_values)
-        if len(plot_data[band]) > 1000:  # Keep last 1000 samples (about 20 seconds at 50Hz effective rate)
+        if len(plot_data[band]) > 500:  # Keep last 500 samples for faster processing
             plot_data[band].pop(0)
     
     # Add relative timestamp (seconds since recording started)
@@ -227,19 +218,25 @@ def data_callback(band, data, timestamp):
         relative_time = time.time() - recording_start_time
         timestamps.append(relative_time)
     
-    if len(timestamps) > 1000:  # Keep last 1000 timestamps
+    if len(timestamps) > 500:  # Keep last 500 timestamps
         timestamps.pop(0)
     
-    # Put data in queue for streaming (more frequently for smoother updates)
-    if len(plot_data.get(band, [])) % 3 == 0:  # Queue every 3rd sample for smoother updates
-        try:
-            data_queue.put_nowait({
-                'band': band,
-                'data': data_values,
-                'timestamp': timestamps[-1]  # Use relative timestamp
-            })
-        except queue.Full:
-            pass  # Queue is full, skip this data point
+    # Limit the main data buffer to prevent memory issues
+    if hasattr(eeg_recorder, 'data_buffer') and len(eeg_recorder.data_buffer) > 50000:  # ~6.5 minutes at 128Hz
+        print("⚠️ Data buffer limit reached, removing oldest samples to prevent memory issues")
+        eeg_recorder.data_buffer = eeg_recorder.data_buffer[-25000:]  # Keep last 25k samples
+        if hasattr(eeg_recorder, 'time_buffer'):
+            eeg_recorder.time_buffer = eeg_recorder.time_buffer[-25000:]
+    
+    # Put data in queue for streaming (every sample for maximum smoothness)
+    try:
+        data_queue.put_nowait({
+            'band': band,
+            'data': data_values,
+            'timestamp': timestamps[-1]  # Use relative timestamp
+        })
+    except queue.Full:
+        pass  # Queue is full, skip this data point
 
 def recording_worker():
     """Worker thread for EEG recording"""
@@ -265,18 +262,14 @@ def recording_worker():
             except Exception as e:
                 print(f"Warning: Error during disconnect: {e}")
 
-@app.route('/')
-def index():
-    """Main page with EEG recording interface"""
-    return render_template('index.html')
-
+# API Routes
 @app.route('/api/test')
 def test():
-    """Test endpoint to check if Flask is working"""
+    """Test endpoint to check if Flask API is working"""
     return jsonify({
         'status': 'success',
-        'message': 'Flask app is running correctly',
-        'timestamp': datetime.now().isoformat()
+        'message': 'Flask API is running correctly',
+        'timestamp': datetime.datetime.now().isoformat()
     })
 
 @app.route('/api/debug')
@@ -286,125 +279,91 @@ def debug():
     
     debug_info = {
         'recording_active': recording_active,
-        'data_lengths': {band: len(data) for band, data in plot_data.items()},
-        'timestamps_length': len(timestamps),
         'eeg_recorder_exists': eeg_recorder is not None,
         'emulator_mode': getattr(eeg_recorder, 'emulator_mode', False) if eeg_recorder else False,
+        'data_lengths': {band: len(values) for band, values in plot_data.items()},
+        'timestamps_length': len(timestamps),
         'latest_data': {}
     }
     
-    # Add latest data samples for each band
-    for band, data in plot_data.items():
-        if data:
-            debug_info['latest_data'][band] = data[-1] if data else 0.0
+    # Add latest data sample for each band
+    for band, values in plot_data.items():
+        if values:
+            debug_info['latest_data'][band] = values[-1]
     
     return jsonify(debug_info)
 
 @app.route('/api/test_data')
 def test_data():
-    """Generate test data for UI testing"""
-    global plot_data, timestamps
-    
+    """Generate test data for frontend development"""
     import random
-    import math
     
-    # Generate some fake EEG data
-    current_time = time.time()
+    # Generate fake EEG data
+    test_data = {}
+    bands = ['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma']
     
-    for band in ['raw', 'delta', 'theta', 'alpha', 'beta', 'gamma']:
-        # Generate 20 samples of fake data
-        for i in range(20):
-            # Create realistic-looking EEG data
-            if band == 'raw':
-                value = 20 * math.sin(i * 0.5) + random.uniform(-5, 5)
-            elif band == 'alpha':
-                value = 15 * math.sin(i * 0.3) + random.uniform(-3, 3)
-            elif band == 'beta':
-                value = 10 * math.sin(i * 0.7) + random.uniform(-2, 2)
-            else:
-                value = 5 * math.sin(i * 0.4) + random.uniform(-1, 1)
-            
-            plot_data[band].append(value)
-            timestamps.append(current_time + i * 0.1)  # 100ms intervals
-            
-            # Keep only last 100 samples
-            if len(plot_data[band]) > 100:
-                plot_data[band].pop(0)
-            if len(timestamps) > 100:
-                timestamps.pop(0)
+    for band in bands:
+        # Generate 100 samples of 14-channel data
+        values = []
+        for _ in range(100):
+            channel_data = []
+            for ch in range(14):
+                # Generate realistic EEG-like values
+                value = random.uniform(-50, 50) + random.uniform(-10, 10) * random.random()
+                channel_data.append(value)
+            values.append(channel_data)
+        
+        test_data[band] = {
+            'values': values,
+            'timestamps': [i * 0.1 for i in range(100)],  # 0.1s intervals
+            'channels': 14
+        }
     
-    return jsonify({
-        'status': 'success',
-        'message': 'Test data generated',
-        'samples_added': 20
-    })
+    return jsonify(test_data)
 
 @app.route('/api/start_recording', methods=['POST'])
 def start_recording():
     """Start EEG recording"""
-    global eeg_recorder, recording_thread, recording_active, recording_start_time
+    global eeg_recorder, recording_active, plot_data, timestamps, recording_start_time
     
     if recording_active:
         return jsonify({'status': 'error', 'message': 'Recording already active'})
     
     try:
-        print("🔄 Initializing EEG recorder...")
-        
-        # Initialize EEG recorder
-        eeg_recorder = FlaskEEGRecorder()
-        eeg_recorder.set_data_callback(data_callback)
-        print(f"✅ Data callback set: {eeg_recorder.data_callback is not None}")
-        
-        print("🔄 Setting up headset...")
-        
-        # Setup headset with error handling
-        try:
-            print("🔄 Attempting device detection...")
-            success = eeg_recorder.setup_headset()
-            
-            if not success:
-                print("⚠️ Device setup failed, switching to emulator mode")
-                # Force emulator mode if device setup fails
-                eeg_recorder.epoc = EEGEmulator(sampling_rate=128, num_channels=14)
-                eeg_recorder.emulator_mode = True
-                eeg_recorder.channels = eeg_recorder.epoc.channels
-                success = True
-                
-        except Exception as setup_error:
-            print(f"⚠️ Setup error: {setup_error}")
-            print("🔄 Falling back to emulator mode...")
-            # Fallback to emulator mode
-            try:
-                from record_eeg_with_live_filter import EEGEmulator
-                eeg_recorder.epoc = EEGEmulator(sampling_rate=128, num_channels=14)
-                eeg_recorder.emulator_mode = True
-                eeg_recorder.channels = eeg_recorder.epoc.channels
-                success = True
-            except Exception as emu_error:
-                return jsonify({'status': 'error', 'message': f'Failed to initialize emulator: {emu_error}'})
-        
-        print("🔄 Configuring recording...")
-        
-        # Configure recording - simplified for web
-        eeg_recorder.enable_live_filtering = True
-        eeg_recorder.active_filter_bands = ['raw', 'delta', 'theta', 'alpha', 'beta', 'gamma']
-        eeg_recorder.enable_live_plot = False  # Disable matplotlib plotting
-        print(f"✅ Live filtering enabled: {eeg_recorder.enable_live_filtering}")
-        print(f"✅ Live plotting disabled for web optimization")
-        print(f"✅ Active bands: {eeg_recorder.active_filter_bands}")
-        
-        print("🔄 Starting recording thread...")
-        
-        # Reset recording start time
+        # Reset data buffers
+        for band in plot_data:
+            plot_data[band] = []
+        timestamps = []
         recording_start_time = None
         
+        # Initialize EEG recorder if not exists
+        if eeg_recorder is None:
+            print("🎧 Initializing EEG recorder...")
+            eeg_recorder = FlaskEEGRecorder()
+            eeg_recorder.set_data_callback(data_callback)
+            
+            # Setup headset with timeout and fallback
+            try:
+                if not eeg_recorder.setup_headset():
+                    print("⚠️ Headset setup failed, using emulator")
+                    # Force emulator mode
+                    eeg_recorder.epoc = EEGEmulator(sampling_rate=128, num_channels=14)
+                    eeg_recorder.emulator_mode = True
+                    eeg_recorder.channels = eeg_recorder.epoc.channels
+            except Exception as e:
+                print(f"⚠️ Error during headset setup: {e}")
+                print("🤖 Falling back to emulator mode")
+                eeg_recorder.epoc = EEGEmulator(sampling_rate=128, num_channels=14)
+                eeg_recorder.emulator_mode = True
+                eeg_recorder.channels = eeg_recorder.epoc.channels
+        
+        # Enable live plotting for data streaming
+        eeg_recorder.enable_live_plot = True
+        
         # Start recording in background thread
+        recording_active = True
         recording_thread = threading.Thread(target=recording_worker, daemon=True)
         recording_thread.start()
-        recording_active = True
-        
-        # Wait a moment to ensure the thread starts
-        time.sleep(0.5)
         
         mode = "Emulator" if getattr(eeg_recorder, 'emulator_mode', False) else "Real Device"
         print(f"✅ Recording started successfully in {mode} mode")
@@ -424,23 +383,63 @@ def start_recording():
 
 @app.route('/api/stop_recording', methods=['POST'])
 def stop_recording():
-    """Stop EEG recording"""
-    global eeg_recorder, recording_active
+    """Emergency stop EEG recording - bypasses all normal cleanup"""
+    global eeg_recorder, recording_active, plot_data, timestamps
     
-    if not recording_active:
-        return jsonify({'status': 'error', 'message': 'No recording active'})
+    print(f"🛑 EMERGENCY STOP requested. recording_active: {recording_active}, eeg_recorder: {eeg_recorder is not None}")
     
-    try:
-        recording_active = False
-        
-        if eeg_recorder:
-            eeg_recorder.stop_recording()
-            eeg_recorder.disconnect()
-        
-        return jsonify({'status': 'success', 'message': 'Recording stopped and data saved'})
-        
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+    # Immediately set recording to False to stop any new data collection
+    recording_active = False
+    
+    # Clear all Flask buffers immediately
+    plot_data.clear()
+    timestamps.clear()
+    
+    # Reset recording start time for next recording
+    global recording_start_time
+    recording_start_time = None
+    
+    # Force stop the EEG recorder if it exists
+    if eeg_recorder:
+        try:
+            # Set recording flag to False immediately
+            eeg_recorder.recording = False
+            
+            # Force stop the device if it exists
+            if hasattr(eeg_recorder, 'epoc') and eeg_recorder.epoc:
+                eeg_recorder.epoc.recording = False
+            
+            # Force stop any background threads
+            if hasattr(eeg_recorder, 'recording_thread') and eeg_recorder.recording_thread:
+                try:
+                    eeg_recorder.recording_thread.join(timeout=0.1)  # Wait max 0.1 seconds
+                except:
+                    pass
+            
+            # Clear all buffers immediately without any processing
+            if hasattr(eeg_recorder, 'data_buffer'):
+                eeg_recorder.data_buffer.clear()
+            if hasattr(eeg_recorder, 'time_buffer'):
+                eeg_recorder.time_buffer.clear()
+            if hasattr(eeg_recorder, 'filtered_data_buffers'):
+                for band in eeg_recorder.filtered_data_buffers:
+                    eeg_recorder.filtered_data_buffers[band].clear()
+            
+            print("🛑 EMERGENCY STOP: All buffers cleared, recording stopped")
+            
+        except Exception as e:
+            print(f"⚠️ Error during emergency stop: {e}")
+            # Continue anyway - we want to stop regardless of errors
+    
+    # Return immediately without any cleanup
+    print("🛑 EMERGENCY STOP: Returning response immediately")
+    return jsonify({'status': 'success', 'message': 'Recording stopped immediately (emergency stop)'})
+
+@app.route('/api/stop_recording_test', methods=['POST'])
+def stop_recording_test():
+    """Test endpoint to check if Flask is responding"""
+    print("🧪 Test stop endpoint called")
+    return jsonify({'status': 'success', 'message': 'Test endpoint working'})
 
 @app.route('/api/status')
 def get_status():
@@ -459,15 +458,26 @@ def get_status():
 @app.route('/api/data')
 def get_data():
     """Get current EEG data for plotting - optimized for smooth updates"""
-    global plot_data, timestamps
+    global plot_data, timestamps, recording_active
+    
+    # If not recording, return empty data structure
+    if not recording_active:
+        return jsonify({
+            'raw': {'values': [], 'timestamps': [], 'channels': 14},
+            'alpha': {'values': [], 'timestamps': [], 'channels': 14},
+            'beta': {'values': [], 'timestamps': [], 'channels': 14},
+            'delta': {'values': [], 'timestamps': [], 'channels': 14},
+            'theta': {'values': [], 'timestamps': [], 'channels': 14},
+            'gamma': {'values': [], 'timestamps': [], 'channels': 14}
+        })
     
     # Convert data to format suitable for JavaScript
     data = {}
     for band, values in plot_data.items():
         if values:
-            # Send more samples for smoother updates
-            sampled_values = values[::1]  # Send every sample for maximum smoothness
-            sampled_timestamps = timestamps[::1] if timestamps else []
+            # Send all samples for maximum smoothness
+            sampled_values = values  # Send every sample
+            sampled_timestamps = timestamps if timestamps else []
             
             # For multi-channel data, we need to transpose the data
             if sampled_values and isinstance(sampled_values[0], list):
@@ -475,7 +485,7 @@ def get_data():
                 num_channels = len(sampled_values[0]) if sampled_values[0] else 1
                 channel_data = [[] for _ in range(num_channels)]
                 
-                for sample in sampled_values[-1000:]:  # Last 1000 samples
+                for sample in sampled_values[-500:]:  # Last 500 samples for faster processing
                     if isinstance(sample, list):
                         for ch_idx, ch_value in enumerate(sample):
                             if ch_idx < num_channels:
@@ -486,95 +496,22 @@ def get_data():
                 
                 data[band] = {
                     'values': channel_data,  # Array of arrays, one per channel
-                    'timestamps': sampled_timestamps[-1000:] if sampled_timestamps else [],
+                    'timestamps': sampled_timestamps[-500:] if sampled_timestamps else [],
                     'channels': num_channels
                 }
             else:
                 # Single channel data
                 data[band] = {
-                    'values': [sampled_values[-1000:]],  # Wrap in array for consistency
-                    'timestamps': sampled_timestamps[-1000:] if sampled_timestamps else [],
+                    'values': [sampled_values[-500:]],  # Wrap in array for consistency
+                    'timestamps': sampled_timestamps[-500:] if sampled_timestamps else [],
                     'channels': 1
                 }
     
     return jsonify(data)
 
-@app.route('/api/plot/<band>')
-def get_plot(band):
-    """Generate and return a plot image for a specific frequency band"""
-    global plot_data, timestamps
-    
-    if band not in plot_data or not plot_data[band]:
-        return jsonify({'error': 'No data available for this band'})
-    
-    try:
-        # Create figure
-        fig, ax = plt.subplots(figsize=(10, 4))
-        
-        # Get data
-        values = plot_data[band][-100:]  # Last 100 samples
-        times = timestamps[-100:] if timestamps else list(range(len(values)))
-        
-        # Convert timestamps to relative time
-        if times and len(times) > 1:
-            relative_times = [t - times[0] for t in times]
-        else:
-            relative_times = list(range(len(values)))
-        
-        # Plot data
-        ax.plot(relative_times, values, linewidth=1)
-        ax.set_title(f'{band.upper()} Band EEG Activity')
-        ax.set_xlabel('Time (seconds)')
-        ax.set_ylabel('Amplitude (μV)')
-        ax.grid(True, alpha=0.3)
-        
-        # Convert plot to image
-        canvas = FigureCanvas(fig)
-        canvas.draw()
-        
-        # Convert to base64 string
-        img_data = io.BytesIO()
-        fig.savefig(img_data, format='png', bbox_inches='tight', dpi=100)
-        img_data.seek(0)
-        img_base64 = base64.b64encode(img_data.getvalue()).decode()
-        
-        plt.close(fig)
-        
-        return jsonify({'image': img_base64})
-        
-    except Exception as e:
-        return jsonify({'error': str(e)})
-
-@app.route('/stream')
-def stream():
-    """Server-sent events stream for real-time data updates"""
-    def generate():
-        while True:
-            try:
-                # Wait for new data
-                data = data_queue.get(timeout=1)
-                
-                # Send data as SSE
-                yield f"data: {json.dumps(data)}\n\n"
-                
-            except queue.Empty:
-                # Send heartbeat
-                yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': time.time()})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
-    return Response(generate(), mimetype='text/plain')
-
 if __name__ == '__main__':
-    # Create templates directory if it doesn't exist
-    os.makedirs('templates', exist_ok=True)
-    os.makedirs('static', exist_ok=True)
-    os.makedirs('static/css', exist_ok=True)
-    os.makedirs('static/js', exist_ok=True)
-    
-    print("🚀 Starting Flask EEG Recording Interface (Optimized)...")
-    print("📱 Open your browser to http://localhost:5000")
+    print("🚀 Starting Flask EEG API Server...")
+    print("📱 API will be available at http://localhost:5000")
     print("🎧 The interface will automatically detect EEG devices or use emulator")
     print("⚡ Optimized for web streaming - no heavy filtering or plotting")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    app.run(host='0.0.0.0', port=5000, debug=True) 
