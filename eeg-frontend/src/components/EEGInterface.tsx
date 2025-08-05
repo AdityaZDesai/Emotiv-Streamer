@@ -185,15 +185,10 @@ const EEGInterface: React.FC = () => {
         console.log('Available bands:', Object.keys(data));
         console.log('Current band:', currentBand);
         
-        // If no data and we're supposed to be recording, something is wrong
+        // If no data and we're supposed to be recording, log but don't stop immediately
+        // This allows for brief data gaps during restart
         if (isRecordingRef.current && Object.keys(data).length === 0) {
-          console.log('Recording but no data available, stopping data loop');
-          setIsRecording(false);
-          isRecordingRef.current = false;
-          if (animationIdRef.current) {
-            cancelAnimationFrame(animationIdRef.current);
-            animationIdRef.current = null;
-          }
+          console.log('Recording but no data available - this is normal during restart, continuing...');
         }
       }
 

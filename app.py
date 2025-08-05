@@ -209,11 +209,15 @@ def data_callback(band, data, timestamp):
         plot_data[band].append(data_values)
         if len(plot_data[band]) > 500:  # Keep last 500 samples for faster processing
             plot_data[band].pop(0)
+        
+        # Debug: Print when we start receiving data for each band
+        if len(plot_data[band]) == 1:
+            print(f"📈 First data received for {band}: {data_values[:3]}...")
     
     # Add relative timestamp (seconds since recording started)
     if recording_start_time is None:
         recording_start_time = time.time()
-        timestamps.append(0.0)
+        timestamps = [0.0]  # Reset timestamps array
     else:
         relative_time = time.time() - recording_start_time
         timestamps.append(relative_time)
@@ -245,6 +249,7 @@ def recording_worker():
     try:
         print("🎧 Starting EEG recording in background thread...")
         if eeg_recorder and eeg_recorder.epoc:
+            print("🎧 EEG recorder and device available, starting recording...")
             eeg_recorder.start_recording()
         else:
             print("❌ No EEG recorder or device available")
@@ -255,6 +260,7 @@ def recording_worker():
         import traceback
         traceback.print_exc()
     finally:
+        print("🎧 Recording worker thread ending, setting recording_active = False")
         recording_active = False
         if eeg_recorder:
             try:
@@ -330,11 +336,19 @@ def start_recording():
         return jsonify({'status': 'error', 'message': 'Recording already active'})
     
     try:
-        # Reset data buffers
-        for band in plot_data:
-            plot_data[band] = []
+        # Reset data buffers and initialize fresh data structures
+        plot_data = {'raw': [], 'alpha': [], 'beta': [], 'delta': [], 'theta': [], 'gamma': []}
         timestamps = []
         recording_start_time = None
+        
+        # Clear the data queue
+        while not data_queue.empty():
+            try:
+                data_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        print(f"🔄 Recording buffers reset: plot_data keys={list(plot_data.keys())}, timestamps length={len(timestamps)}")
         
         # Initialize EEG recorder if not exists
         if eeg_recorder is None:
@@ -365,6 +379,9 @@ def start_recording():
         recording_thread = threading.Thread(target=recording_worker, daemon=True)
         recording_thread.start()
         
+        # Small delay to ensure recording thread is started
+        time.sleep(0.1)
+        
         mode = "Emulator" if getattr(eeg_recorder, 'emulator_mode', False) else "Real Device"
         print(f"✅ Recording started successfully in {mode} mode")
         
@@ -392,12 +409,19 @@ def stop_recording():
     recording_active = False
     
     # Clear all Flask buffers immediately
-    plot_data.clear()
-    timestamps.clear()
+    plot_data = {'raw': [], 'alpha': [], 'beta': [], 'delta': [], 'theta': [], 'gamma': []}
+    timestamps = []
     
     # Reset recording start time for next recording
     global recording_start_time
     recording_start_time = None
+    
+    # Clear the data queue
+    while not data_queue.empty():
+        try:
+            data_queue.get_nowait()
+        except queue.Empty:
+            break
     
     # Force stop the EEG recorder if it exists
     if eeg_recorder:
