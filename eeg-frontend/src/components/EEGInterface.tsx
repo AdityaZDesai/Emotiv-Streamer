@@ -40,6 +40,12 @@ interface EEGResponse {
   gamma?: EEGData;
 }
 
+interface DeviceInfo {
+  type: 'none' | 'emulator' | 'real';
+  name: string;
+  is_emulator: boolean;
+}
+
 const EEGInterface: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [currentBand, setCurrentBand] = useState<'raw' | 'alpha' | 'beta' | 'delta' | 'theta' | 'gamma'>('raw');
@@ -60,12 +66,35 @@ const EEGInterface: React.FC = () => {
   const [status, setStatus] = useState<string>('Ready');
   const [fps, setFps] = useState<number>(0);
   const [logs, setLogs] = useState<string[]>([]);
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo>({
+    type: 'none',
+    name: 'No device connected',
+    is_emulator: false
+  });
   const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Function to check device status
+  const checkDeviceStatus = async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/status');
+      const status = await response.json();
+      if (status.device_info) {
+        setDeviceInfo(status.device_info);
+      }
+    } catch (error) {
+      console.log('Error checking device status:', error);
+    }
+  };
   const frameCountRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(Date.now());
   const isRecordingRef = useRef<boolean>(false);
   const animationFrameRef = useRef<number | null>(null);
   const currentDataRef = useRef<EEGResponse | null>(null);
+
+  // Check device status on component mount
+  useEffect(() => {
+    checkDeviceStatus();
+  }, []);
 
   // Channel colors for multi-channel display
   const channelColors = [
@@ -323,6 +352,12 @@ const EEGInterface: React.FC = () => {
         initializeChart();
         addLog('Starting data loop...');
         
+        // Update device information if provided
+        if (result.device_info) {
+          setDeviceInfo(result.device_info);
+          addLog(`Device: ${result.device_info.name} (${result.device_info.is_emulator ? 'Emulator' : 'Real Device'})`);
+        }
+        
         // Start high-frequency data loop using requestAnimationFrame
         // Only start if not already running
         if (!animationFrameRef.current) {
@@ -509,7 +544,21 @@ const EEGInterface: React.FC = () => {
             <div className="text-sm text-gray-600">
               FPS: {fps}
             </div>
+            <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+              deviceInfo.is_emulator 
+                ? 'bg-yellow-100 text-yellow-800' 
+                : deviceInfo.type === 'real'
+                ? 'bg-blue-100 text-blue-800'
+                : 'bg-gray-100 text-gray-800'
+            }`}>
+              {deviceInfo.is_emulator ? '🤖 Emulator' : deviceInfo.type === 'real' ? '🎧 Real Device' : '❌ No Device'}
+            </div>
           </div>
+          {deviceInfo.type !== 'none' && (
+            <div className="mt-2 text-sm text-gray-600">
+              Device: {deviceInfo.name}
+            </div>
+          )}
         </div>
 
         {/* Controls */}

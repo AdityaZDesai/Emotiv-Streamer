@@ -30,6 +30,7 @@ data_queue = queue.Queue(maxsize=1000)
 plot_data = {'raw': [], 'alpha': [], 'beta': [], 'delta': [], 'theta': [], 'gamma': []}
 timestamps = []
 recording_start_time = None
+device_info = {'type': 'none', 'name': 'No device connected', 'is_emulator': False}
 
 class FlaskEEGRecorder(EEGRecorderWithFilter):
     """Flask-optimized EEG recorder with simplified processing"""
@@ -409,7 +410,7 @@ def test_data():
 @app.route('/api/start_recording', methods=['POST'])
 def start_recording():
     """Start EEG recording"""
-    global eeg_recorder, recording_active, plot_data, timestamps, recording_start_time
+    global eeg_recorder, recording_active, plot_data, timestamps, recording_start_time, device_info
     
     if recording_active:
         return jsonify({'status': 'error', 'message': 'Recording already active'})
@@ -429,18 +430,45 @@ def start_recording():
             
             # Setup headset with timeout and fallback
             try:
-                if not eeg_recorder.setup_headset():
-                    print("⚠️ Headset setup failed, using emulator")
-                    # Force emulator mode
-                    eeg_recorder.epoc = EEGEmulator(sampling_rate=128, num_channels=14)
-                    eeg_recorder.emulator_mode = True
-                    eeg_recorder.channels = eeg_recorder.epoc.channels
+                eeg_recorder.setup_headset()
+                
+                # Check if we're in emulator mode
+                emulator_mode = getattr(eeg_recorder, 'emulator_mode', False)
+                print(f"🔍 Device detection: emulator_mode = {emulator_mode}")
+                
+                if emulator_mode:
+                    print("🤖 Using EEG Emulator mode")
+                    device_info = {
+                        'type': 'emulator',
+                        'name': 'EEG Emulator (No physical device detected)',
+                        'is_emulator': True
+                    }
+                else:
+                    # Real device connected
+                    print("🎧 Using Real Device mode")
+                    if hasattr(eeg_recorder, 'selected_device') and eeg_recorder.selected_device:
+                        device_info = {
+                            'type': 'real',
+                            'name': f"{eeg_recorder.selected_device.get('manufacturer', 'Unknown')} - {eeg_recorder.selected_device.get('product', 'Unknown')}",
+                            'is_emulator': False
+                        }
+                    else:
+                        device_info = {
+                            'type': 'real',
+                            'name': 'Emotiv EPOC Headset',
+                            'is_emulator': False
+                        }
             except Exception as e:
                 print(f"⚠️ Error during headset setup: {e}")
                 print("🤖 Falling back to emulator mode")
                 eeg_recorder.epoc = EEGEmulator(sampling_rate=128, num_channels=14)
                 eeg_recorder.emulator_mode = True
                 eeg_recorder.channels = eeg_recorder.epoc.channels
+                device_info = {
+                    'type': 'emulator',
+                    'name': 'EEG Emulator (Setup error)',
+                    'is_emulator': True
+                }
         
         # Enable live plotting for data streaming
         eeg_recorder.enable_live_plot = True
@@ -456,7 +484,8 @@ def start_recording():
         response_data = {
             'status': 'success',
             'message': f'Recording started successfully in {mode} mode',
-            'emulator_mode': getattr(eeg_recorder, 'emulator_mode', False)
+            'emulator_mode': getattr(eeg_recorder, 'emulator_mode', False),
+            'device_info': device_info
         }
         
         print(f"🔄 Returning response: {response_data}")
@@ -489,13 +518,14 @@ def stop_recording():
 @app.route('/api/status')
 def get_status():
     """Get current recording status"""
-    global recording_active, eeg_recorder
+    global recording_active, eeg_recorder, device_info
     
     status = {
         'recording': recording_active,
         'emulator_mode': getattr(eeg_recorder, 'emulator_mode', False) if eeg_recorder else False,
         'channels': getattr(eeg_recorder, 'channels', []) if eeg_recorder else [],
-        'sampling_rate': getattr(eeg_recorder, 'sampling_rate', 0) if eeg_recorder else 0
+        'sampling_rate': getattr(eeg_recorder, 'sampling_rate', 0) if eeg_recorder else 0,
+        'device_info': device_info
     }
     
     return jsonify(status)
