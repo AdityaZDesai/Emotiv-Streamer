@@ -11,6 +11,7 @@ import {
   Tooltip,
   Legend,
   ChartOptions,
+  ChartData,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 
@@ -45,9 +46,15 @@ const EEGInterface: React.FC = () => {
   
   // Debug: Log initial state
   console.log('Initial currentBand:', currentBand);
-  const [chartData, setChartData] = useState<any>({
-    labels: [],
-    datasets: []
+  const [chartData, setChartData] = useState<{
+    [key: string]: ChartData<'line'>
+  }>({
+    raw: { labels: [], datasets: [] },
+    alpha: { labels: [], datasets: [] },
+    beta: { labels: [], datasets: [] },
+    delta: { labels: [], datasets: [] },
+    theta: { labels: [], datasets: [] },
+    gamma: { labels: [], datasets: [] }
   });
   const [currentValues, setCurrentValues] = useState<{[key: string]: number}>({});
   const [status, setStatus] = useState<string>('Ready');
@@ -56,7 +63,8 @@ const EEGInterface: React.FC = () => {
   const frameCountRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(Date.now());
   const isRecordingRef = useRef<boolean>(false);
-  const animationIdRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const currentDataRef = useRef<EEGResponse | null>(null);
 
   // Channel colors for multi-channel display
   const channelColors = [
@@ -67,70 +75,68 @@ const EEGInterface: React.FC = () => {
   ];
 
   const initializeChart = () => {
-    console.log('Initializing chart...');
-    const datasets = [{
-      label: 'Channel 1',
-      data: [],
-      borderColor: channelColors[0],
-      backgroundColor: channelColors[0] + '20',
-      borderWidth: 1.5,
-      fill: false,
-      tension: 0.1,
-      pointRadius: 0,
-      pointHoverRadius: 3
-    }];
-
-    const initialData = {
-      labels: [],
-      datasets
+    console.log('Initializing charts...');
+    const initialChartData = {
+      raw: { labels: [], datasets: [] },
+      alpha: { labels: [], datasets: [] },
+      beta: { labels: [], datasets: [] },
+      delta: { labels: [], datasets: [] },
+      theta: { labels: [], datasets: [] },
+      gamma: { labels: [], datasets: [] }
     };
-    console.log('Setting initial chart data:', initialData);
-    setChartData(initialData);
+    console.log('Setting initial chart data:', initialChartData);
+    setChartData(initialChartData);
   };
 
-  const updateChart = (data: EEGData) => {
-    console.log('updateChart called with data:', data);
-    if (!data.values || data.values.length === 0) {
-      console.log('No values in data');
-      return;
-    }
+  const updateAllCharts = (data: EEGResponse) => {
+    console.log('updateAllCharts called with data:', data);
+    
+    const newChartData = { ...chartData };
+    
+    // Update each band's chart
+    const bands = ['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const;
+    
+    bands.forEach(band => {
+      const bandData = data[band];
+      if (bandData && bandData.values && bandData.values.length > 0) {
+        console.log(`Updating ${band} chart with ${bandData.channels} channels`);
+        
+        const datasets = [];
+        // Create datasets for each channel
+        for (let ch = 0; ch < bandData.channels; ch++) {
+          const channelData = bandData.values[ch] || [];
+          datasets.push({
+            label: `Channel ${ch + 1}`,
+            data: channelData,
+            borderColor: channelColors[ch % channelColors.length],
+            backgroundColor: channelColors[ch % channelColors.length] + '20',
+            borderWidth: 1.5,
+            fill: false,
+            tension: 0.1,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            stepped: false,
+            cubicInterpolationMode: 'monotone' as const
+          });
+        }
 
-    const numChannels = data.channels;
-    console.log('Number of channels:', numChannels);
-    const datasets = [];
-
-    // Create datasets for each channel
-    for (let ch = 0; ch < numChannels; ch++) {
-      const channelData = data.values[ch] || [];
-      console.log(`Channel ${ch + 1} data length:`, channelData.length);
-      datasets.push({
-        label: `Channel ${ch + 1}`,
-        data: channelData,
-        borderColor: channelColors[ch % channelColors.length],
-        backgroundColor: channelColors[ch % channelColors.length] + '20',
-        borderWidth: 1.5,
-        fill: false,
-        tension: 0.1,
-        pointRadius: 0,
-        pointHoverRadius: 3,
-        stepped: false, // Smooth lines
-        cubicInterpolationMode: 'monotone' // Better curve interpolation
-      });
-    }
-
-    const newChartData = {
-      labels: data.timestamps.map(t => t.toFixed(1)),
-      datasets
-    };
-    console.log('Setting chart data:', newChartData);
-    console.log('Chart data labels length:', newChartData.labels.length);
-    console.log('Chart data datasets length:', newChartData.datasets.length);
-    console.log('First few labels:', newChartData.labels.slice(0, 5));
-    console.log('First dataset first few values:', newChartData.datasets[0]?.data?.slice(0, 5));
+        newChartData[band] = {
+          labels: bandData.timestamps.map(t => t.toFixed(1)),
+          datasets
+        };
+      }
+    });
+    
     setChartData(newChartData);
   };
 
   const updateData = async () => {
+    // Don't fetch data if not recording
+    if (!isRecordingRef.current) {
+      console.log('Not recording, skipping data fetch');
+      return;
+    }
+    
     try {
       console.log('Fetching data from API...');
       const response = await fetch('http://localhost:5000/api/data');
@@ -144,6 +150,36 @@ const EEGInterface: React.FC = () => {
       const data: EEGResponse = await response.json();
       console.log('Received data keys:', Object.keys(data));
       console.log('Received data:', data);
+      
+      // Store current data for band switching
+      currentDataRef.current = data;
+      console.log(`💾 STORED DATA DEBUG: Stored data with keys:`, Object.keys(data));
+      console.log(`  Data structure check:`, {
+        raw: data.raw ? 'exists' : 'missing',
+        alpha: data.alpha ? 'exists' : 'missing',
+        beta: data.beta ? 'exists' : 'missing',
+        delta: data.delta ? 'exists' : 'missing',
+        theta: data.theta ? 'exists' : 'missing',
+        gamma: data.gamma ? 'exists' : 'missing'
+      });
+      
+      // Debug: Compare data between bands
+      if (Object.keys(data).length > 1) {
+        console.log('🔍 BAND COMPARISON DEBUG:');
+        const bands = ['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'];
+        for (let i = 0; i < bands.length - 1; i++) {
+          const band1 = bands[i];
+          const band2 = bands[i + 1];
+          const data1 = data[band1 as keyof EEGResponse];
+          const data2 = data[band2 as keyof EEGResponse];
+          
+          if (data1 && data2 && data1.values.length > 0 && data2.values.length > 0) {
+            const val1 = data1.values[0][0]; // First value of first channel
+            const val2 = data2.values[0][0]; // First value of first channel
+            console.log(`  ${band1} vs ${band2}: ${val1} vs ${val2} (diff: ${Math.abs(val1 - val2).toFixed(3)})`);
+          }
+        }
+      }
 
       // Update FPS counter
       frameCountRef.current++;
@@ -174,23 +210,9 @@ const EEGInterface: React.FC = () => {
         }
       });
 
-      // Update chart if current band has data
-      const currentBandData = data[currentBand];
-      console.log('Current band data:', currentBandData);
-      if (currentBandData && currentBandData.values.length > 0) {
-        console.log('Updating chart with data');
-        updateChart(currentBandData);
-      } else {
-        console.log('No data for current band or no values');
-        console.log('Available bands:', Object.keys(data));
-        console.log('Current band:', currentBand);
-        
-        // If no data and we're supposed to be recording, log but don't stop immediately
-        // This allows for brief data gaps during restart
-        if (isRecordingRef.current && Object.keys(data).length === 0) {
-          console.log('Recording but no data available - this is normal during restart, continuing...');
-        }
-      }
+      // Update all charts with the new data
+      console.log('Updating all charts with data');
+      updateAllCharts(data);
 
     } catch (error) {
       console.error('Error updating data:', error);
@@ -198,9 +220,14 @@ const EEGInterface: React.FC = () => {
   };
 
   const startDataLoop = () => {
+    // Cancel any existing animation frame first
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    
     console.log('Starting data loop with requestAnimationFrame');
     let frameCount = 0;
-    
     const loop = () => {
       if (isRecordingRef.current) {
         frameCount++;
@@ -208,31 +235,19 @@ const EEGInterface: React.FC = () => {
           console.log(`Data loop frame ${frameCount}`);
         }
         updateData();
-        animationIdRef.current = requestAnimationFrame(loop);
+        animationFrameRef.current = requestAnimationFrame(loop);
       } else {
         console.log('Data loop stopped - recording inactive');
-        if (animationIdRef.current) {
-          cancelAnimationFrame(animationIdRef.current);
-          animationIdRef.current = null;
-        }
+        animationFrameRef.current = null;
       }
     };
-    animationIdRef.current = requestAnimationFrame(loop);
+    animationFrameRef.current = requestAnimationFrame(loop);
   };
 
   const startRecording = async () => {
     try {
       console.log('Starting recording...');
       setStatus('Starting recording...');
-      
-      // Reset any previous state
-      setIsRecording(false);
-      isRecordingRef.current = false;
-      if (animationIdRef.current) {
-        cancelAnimationFrame(animationIdRef.current);
-        animationIdRef.current = null;
-      }
-      
       const response = await fetch('http://localhost:5000/api/start_recording', {
         method: 'POST',
         headers: {
@@ -251,7 +266,10 @@ const EEGInterface: React.FC = () => {
         console.log('Starting data loop...');
         
         // Start high-frequency data loop using requestAnimationFrame
-        startDataLoop();
+        // Only start if not already running
+        if (!animationFrameRef.current) {
+          startDataLoop();
+        }
       } else {
         setStatus(`Error: ${result.message}`);
       }
@@ -263,61 +281,27 @@ const EEGInterface: React.FC = () => {
 
   const stopRecording = async () => {
     try {
-      console.log('🛑 Frontend: Stopping recording...');
       setStatus('Stopping recording...');
-      
-      // Immediately stop the data loop
-      setIsRecording(false);
-      isRecordingRef.current = false;
-      
-      // Immediately cancel the animation frame to stop the data loop
-      if (animationIdRef.current) {
-        cancelAnimationFrame(animationIdRef.current);
-        animationIdRef.current = null;
-        console.log('🛑 Frontend: Animation frame cancelled');
-      }
-      
-      // Quick health check first
-      try {
-        const healthResponse = await fetch('http://localhost:5000/api/test', { 
-          signal: AbortSignal.timeout(1000) // 1 second timeout
-        });
-        if (!healthResponse.ok) {
-          throw new Error('Server health check failed');
-        }
-        console.log('🛑 Frontend: Server health check passed');
-      } catch (healthError) {
-        console.log('🛑 Frontend: Server health check failed:', healthError);
-        setStatus('Server not responding - recording stopped locally');
-        return;
-      }
-      
-      // Create a timeout for the fetch request
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
-      
-      console.log('🛑 Frontend: Making stop request to API...');
       const response = await fetch('http://localhost:5000/api/stop_recording', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        signal: controller.signal
       });
 
-      clearTimeout(timeoutId);
-      console.log('🛑 Frontend: Stop request completed, status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
       const result = await response.json();
-      console.log('🛑 Frontend: Stop response:', result);
       
       if (result.status === 'success') {
+        setIsRecording(false);
+        isRecordingRef.current = false;
         setStatus('Recording stopped');
-        console.log('🛑 Frontend: Recording stopped successfully');
+        
+        // Stop the animation frame loop
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+          console.log('Animation frame loop stopped');
+        }
         
         // Stop polling (requestAnimationFrame stops automatically when isRecording becomes false)
         if (updateIntervalRef.current) {
@@ -329,29 +313,51 @@ const EEGInterface: React.FC = () => {
       }
     } catch (error) {
       console.error('Error stopping recording:', error);
-      if (error instanceof Error && error.name === 'AbortError') {
-        setStatus('Stop request timed out, but recording stopped locally');
-      } else if (error instanceof Error && error.message.includes('Failed to fetch')) {
-        setStatus('Cannot connect to server - recording stopped locally');
-        console.log('🛑 Frontend: Server connection failed, but recording stopped locally');
-      } else {
-        setStatus('Error stopping recording');
-      }
+      setStatus('Error stopping recording');
     }
   };
 
   const changeBand = (band: typeof currentBand) => {
+    console.log(`🎯 CHANGE BAND CLICKED: ${band}`);
+    console.log(`Current band before change: ${currentBand}`);
+    console.log(`Current data ref exists: ${!!currentDataRef.current}`);
+    
     setCurrentBand(band);
+    
+    // Immediately update chart with data for the new band using stored data
+    if (currentDataRef.current) {
+      console.log(`🔄 BAND CHANGE DEBUG: Switching to ${band}`);
+      console.log(`  Available bands:`, Object.keys(currentDataRef.current));
+      console.log(`  Full current data:`, currentDataRef.current);
+      
+      const newBandData = currentDataRef.current[band];
+      console.log(`  New band data for ${band}:`, newBandData);
+      
+              if (newBandData && newBandData.values.length > 0) {
+          console.log(`  ✅ Band ${band} has data, updating all charts`);
+          console.log(`  Data structure:`, {
+            channels: newBandData.channels,
+            timestampsLength: newBandData.timestamps.length,
+            valuesLength: newBandData.values.length,
+            firstChannelValues: newBandData.values[0]?.slice(0, 5)
+          });
+          updateAllCharts(currentDataRef.current!);
+        } else {
+        console.log(`❌ No data available for band ${band}`);
+      }
+    } else {
+      console.log('❌ No current data available for band change');
+    }
   };
 
   useEffect(() => {
-    // Cleanup on unmount
+    // Cleanup interval and animation frame on unmount
     return () => {
       if (updateIntervalRef.current) {
         clearInterval(updateIntervalRef.current);
       }
-      if (animationIdRef.current) {
-        cancelAnimationFrame(animationIdRef.current);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
     };
   }, []);
@@ -471,21 +477,9 @@ const EEGInterface: React.FC = () => {
               Test Data Fetch
             </button>
 
-            {/* Band Selection */}
-            <div className="flex flex-wrap gap-2">
-              {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
-                <button
-                  key={band}
-                  onClick={() => changeBand(band)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    currentBand === band
-                      ? 'bg-blue-100 text-blue-800 border-2 border-blue-300'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {band.toUpperCase()}
-                </button>
-              ))}
+            {/* All bands are now displayed simultaneously */}
+            <div className="text-sm text-gray-600">
+              All 6 frequency bands are displayed in the charts below
             </div>
           </div>
         </div>
@@ -508,20 +502,39 @@ const EEGInterface: React.FC = () => {
           </div>
         </div>
 
-        {/* Chart */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">
-            {currentBand === 'raw' ? 'Multi-Channel Raw EEG' : `${currentBand.toUpperCase()} Band`}
-          </h2>
-                  <div className="h-96">
-          <div className="text-sm text-gray-500 mb-2">
-            Chart data: {chartData.labels.length} labels, {chartData.datasets.length} datasets
-            {chartData.labels.length > 0 && (
-              <span> | First label: {chartData.labels[0]} | Last label: {chartData.labels[chartData.labels.length - 1]}</span>
-            )}
-          </div>
-          <Line data={chartData} options={chartOptions} />
-        </div>
+        {/* Charts Stack */}
+        <div className="space-y-6">
+          {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
+            <div key={band} className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                {band === 'raw' ? 'Multi-Channel Raw EEG' : `${band.toUpperCase()} Band`}
+              </h2>
+              <div className="h-96">
+                <Line 
+                  data={chartData[band]} 
+                  options={{
+                    ...chartOptions,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      ...chartOptions.plugins,
+                      legend: {
+                        display: true, // Show legend to see channel colors
+                        position: 'top' as const,
+                        labels: {
+                          usePointStyle: true,
+                          padding: 10,
+                          font: {
+                            size: 11
+                          }
+                        }
+                      }
+                    }
+                  }} 
+                />
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
