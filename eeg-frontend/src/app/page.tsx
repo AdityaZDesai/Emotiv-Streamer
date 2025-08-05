@@ -188,6 +188,7 @@ export default function Home() {
             <Button 
               variant="outline" 
               className="px-8 py-4 text-lg border-slate-600 text-slate-600 hover:bg-slate-800 hover:text-slate-300 transition-all duration-300"
+              onClick={() => window.open('https://github.com/AdityaZDesai/Emotiv-Streamer', '_blank')}
             >
               Learn More
             </Button>
