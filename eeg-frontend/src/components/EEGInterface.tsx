@@ -50,7 +50,21 @@ interface DeviceInfo {
   is_emulator: boolean;
 }
 
-const EEGInterface: React.FC = () => {
+interface EEGInterfaceProps {
+  externalIsRecording?: boolean;
+  onRecordingChange?: (isRecording: boolean) => void;
+  onStatusChange?: (status: string) => void;
+  onFpsChange?: (fps: number) => void;
+  onDeviceInfoChange?: (deviceInfo: DeviceInfo) => void;
+}
+
+const EEGInterface: React.FC<EEGInterfaceProps> = ({
+  externalIsRecording,
+  onRecordingChange,
+  onStatusChange,
+  onFpsChange,
+  onDeviceInfoChange
+}) => {
   const [isRecording, setIsRecording] = useState(false);
   const [currentBand, setCurrentBand] = useState<'raw' | 'alpha' | 'beta' | 'delta' | 'theta' | 'gamma'>('raw');
   
@@ -77,6 +91,8 @@ const EEGInterface: React.FC = () => {
   });
   const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
+  // Maximum number of data points to display on charts (smaller = faster filling)
+  const MAX_DATA_POINTS = 100; // Adjust this value to change time window size
   // Function to check device status
   const checkDeviceStatus = async () => {
     try {
@@ -84,6 +100,7 @@ const EEGInterface: React.FC = () => {
       const status = await response.json();
       if (status.device_info) {
         setDeviceInfo(status.device_info);
+        onDeviceInfoChange?.(status.device_info);
       }
     } catch (error) {
       console.log('Error checking device status:', error);
@@ -99,6 +116,42 @@ const EEGInterface: React.FC = () => {
   useEffect(() => {
     checkDeviceStatus();
   }, []);
+
+  // Sync with external recording state
+  useEffect(() => {
+    if (externalIsRecording !== undefined) {
+      const wasRecording = isRecordingRef.current;
+      setIsRecording(externalIsRecording);
+      isRecordingRef.current = externalIsRecording;
+      
+      if (externalIsRecording && !wasRecording) {
+        // External recording started
+        console.log('External recording started, initializing charts and starting data loop');
+        initializeChart();
+        startDataLoop();
+      } else if (!externalIsRecording && wasRecording) {
+        // External recording stopped
+        console.log('External recording stopped, stopping data loop');
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+      }
+    }
+  }, [externalIsRecording]);
+
+  // Update external state when internal state changes
+  useEffect(() => {
+    onRecordingChange?.(isRecording);
+  }, [isRecording, onRecordingChange]);
+
+  useEffect(() => {
+    onStatusChange?.(status);
+  }, [status, onStatusChange]);
+
+  useEffect(() => {
+    onFpsChange?.(fps);
+  }, [fps, onFpsChange]);
 
   // Channel colors for multi-channel display - minimalistic colors
   const channelColors = [
@@ -192,9 +245,11 @@ const EEGInterface: React.FC = () => {
           // Create datasets for each channel
           for (let ch = 0; ch < bandData.channels; ch++) {
             const channelData = bandData.values[ch] || [];
+            // Limit data points to show smaller time window
+            const limitedChannelData = channelData.slice(-MAX_DATA_POINTS);
             datasets.push({
               label: `Channel ${ch + 1}`,
-              data: channelData,
+              data: limitedChannelData,
               borderColor: channelColors[ch % channelColors.length],
               backgroundColor: channelColors[ch % channelColors.length] + '20',
               borderWidth: 1,
@@ -207,8 +262,10 @@ const EEGInterface: React.FC = () => {
             });
           }
 
+          // Limit timestamps to match the data points
+          const limitedTimestamps = bandData.timestamps.slice(-MAX_DATA_POINTS);
           newChartData[band] = {
-            labels: bandData.timestamps.map(t => t.toFixed(1)),
+            labels: limitedTimestamps.map(t => t.toFixed(1)),
             datasets
           };
         } else {
@@ -544,61 +601,6 @@ const EEGInterface: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 p-6">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <Card className="mb-8 bg-slate-900/50 border-slate-700">
-          <CardHeader className="text-center pb-4">
-            <CardTitle className="text-3xl font-light text-slate-100 mb-2">
-              Neural Interface
-            </CardTitle>
-            <p className="text-slate-400 text-sm">
-              Real-time EEG data visualization
-            </p>
-            <div className="mt-6 flex flex-wrap justify-center items-center gap-3">
-              <Badge variant={isRecording ? "destructive" : "secondary"} className="text-xs font-medium">
-                {isRecording ? 'Recording' : 'Stopped'}
-              </Badge>
-              <Badge variant="outline" className="text-xs font-medium border-slate-600 text-slate-300">
-                {status}
-              </Badge>
-              <Badge variant="outline" className="text-xs font-medium border-slate-600 text-slate-300">
-                {fps} FPS
-              </Badge>
-              <Badge variant="outline" className={`text-xs font-medium ${
-                deviceInfo.is_emulator 
-                  ? 'border-amber-600 text-amber-300' 
-                  : deviceInfo.type === 'real'
-                  ? 'border-blue-600 text-blue-300'
-                  : 'border-slate-600 text-slate-300'
-              }`}>
-                {deviceInfo.is_emulator ? 'Emulator' : deviceInfo.type === 'real' ? 'Real Device' : 'No Device'}
-              </Badge>
-            </div>
-            {deviceInfo.type !== 'none' && (
-              <div className="mt-2 text-xs text-slate-500">
-                {deviceInfo.name}
-              </div>
-            )}
-          </CardHeader>
-        </Card>
-
-        {/* Controls */}
-        <Card className="mb-8 bg-slate-900/50 border-slate-700">
-          <CardContent className="p-6">
-            <div className="flex flex-wrap gap-4 items-center justify-center">
-              <Button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                  isRecording
-                    ? 'bg-red-600 hover:bg-red-700 text-white'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-              >
-                {isRecording ? 'Stop Recording' : 'Start Recording'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Current Values */}
         <Card className="mb-8 bg-slate-900/50 border-slate-700">
           <CardHeader className="pb-4">
