@@ -9,11 +9,13 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [fps, setFps] = useState(0);
+  const [showValues, setShowValues] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState({
     type: 'none' as 'none' | 'emulator' | 'real',
     name: 'No device connected',
     is_emulator: false
   });
+  const [currentValues, setCurrentValues] = useState<{[key: string]: number}>({});
 
   const startRecording = async () => {
     try {
@@ -100,8 +102,16 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right Side - Recording Button */}
+            {/* Right Side - Recording Button and Values Toggle */}
             <div className="flex items-center space-x-4">
+              <Button
+                onClick={() => setShowValues(!showValues)}
+                variant="outline"
+                size="sm"
+                className="text-xs border-slate-600 text-slate-600 hover:bg-slate-800 hover:text-slate-300"
+              >
+                {showValues ? 'Hide Values' : 'Show Values'}
+              </Button>
               <Button
                 onClick={isRecording ? stopRecording : startRecording}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -114,6 +124,27 @@ export default function Home() {
               </Button>
             </div>
           </div>
+
+          {/* Expandable Current Values Section */}
+          {showValues && (
+            <div className="mt-4 pt-4 border-t border-slate-700/50">
+              <div className="flex justify-center">
+                <div className="flex space-x-8 bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
+                  {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
+                    <div key={band} className="text-center">
+                      <div className="text-xs font-medium text-slate-400 mb-1">
+                        {band.toUpperCase()}
+                      </div>
+                      <div className="text-lg font-mono text-slate-100">
+                        {currentValues[band]?.toFixed(2) || '0.00'}
+                      </div>
+                      <div className="text-xs text-slate-500">μV</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -139,14 +170,24 @@ export default function Home() {
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
             <Button 
-              onClick={() => document.getElementById('eeg-interface')?.scrollIntoView({ behavior: 'smooth' })}
-              className="px-8 py-4 text-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
+              onClick={() => {
+                const element = document.getElementById('eeg-interface');
+                if (element) {
+                  const navHeight = 80; // Approximate nav bar height
+                  const elementPosition = element.offsetTop - navHeight;
+                  window.scrollTo({
+                    top: elementPosition,
+                    behavior: 'smooth'
+                  });
+                }
+              }}
+              className="px-8 py-4 text-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white transition-all duration-300 transform hover:scale-105"
             >
               Start Monitoring
             </Button>
             <Button 
               variant="outline" 
-              className="px-8 py-4 text-lg border-slate-600 text-slate-300 hover:bg-slate-800"
+              className="px-8 py-4 text-lg border-slate-600 text-slate-600 hover:bg-slate-800 hover:text-slate-300 transition-all duration-300"
             >
               Learn More
             </Button>
@@ -172,25 +213,29 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {/* Scroll Indicator */}
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 animate-bounce">
+          <div className="w-6 h-10 border-2 border-slate-400 rounded-full flex justify-center">
+            <div className="w-1 h-3 bg-slate-400 rounded-full mt-2 animate-pulse"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Transition Gradient */}
+      <div className="h-32 bg-gradient-to-b from-slate-950 to-slate-900 relative">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/50 to-slate-950"></div>
       </div>
 
       {/* EEG Interface Section - Sticky */}
-      <div id="eeg-interface" className="sticky top-0 z-30">
-        <div className="absolute top-6 left-6 z-40">
-          <Button 
-            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            variant="outline"
-            className="bg-slate-900/80 border-slate-600 text-slate-300 hover:bg-slate-800"
-          >
-            ↑ Back to Top
-          </Button>
-        </div>
+      <div id="eeg-interface" className="sticky top-0 z-30 bg-slate-900">
         <EEGInterface 
           externalIsRecording={isRecording}
           onRecordingChange={setIsRecording}
           onStatusChange={setStatus}
           onFpsChange={setFps}
           onDeviceInfoChange={setDeviceInfo}
+          onCurrentValuesChange={setCurrentValues}
         />
       </div>
     </div>

@@ -56,6 +56,7 @@ interface EEGInterfaceProps {
   onStatusChange?: (status: string) => void;
   onFpsChange?: (fps: number) => void;
   onDeviceInfoChange?: (deviceInfo: DeviceInfo) => void;
+  onCurrentValuesChange?: (currentValues: {[key: string]: number}) => void;
 }
 
 const EEGInterface: React.FC<EEGInterfaceProps> = ({
@@ -63,7 +64,8 @@ const EEGInterface: React.FC<EEGInterfaceProps> = ({
   onRecordingChange,
   onStatusChange,
   onFpsChange,
-  onDeviceInfoChange
+  onDeviceInfoChange,
+  onCurrentValuesChange
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [currentBand, setCurrentBand] = useState<'raw' | 'alpha' | 'beta' | 'delta' | 'theta' | 'gamma'>('raw');
@@ -152,6 +154,10 @@ const EEGInterface: React.FC<EEGInterfaceProps> = ({
   useEffect(() => {
     onFpsChange?.(fps);
   }, [fps, onFpsChange]);
+
+  useEffect(() => {
+    onCurrentValuesChange?.(currentValues);
+  }, [currentValues, onCurrentValuesChange]);
 
   // Channel colors for multi-channel display - minimalistic colors
   const channelColors = [
@@ -599,70 +605,74 @@ const EEGInterface: React.FC<EEGInterfaceProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 p-6">
-      <div className="max-w-6xl mx-auto">
-        {/* Current Values */}
-        <Card className="mb-8 bg-slate-900/50 border-slate-700">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-medium text-slate-100">Current Values</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-              {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
-                <div key={band} className="text-center p-3 rounded-lg bg-slate-800/50 border border-slate-700">
-                  <div className="text-xs font-medium text-slate-400 mb-1">
-                    {band.toUpperCase()}
-                  </div>
-                  <div className="text-xl font-mono text-slate-100">
-                    {currentValues[band]?.toFixed(2) || '0.00'}
-                  </div>
-                  <div className="text-xs text-slate-500">μV</div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+    <div className="min-h-screen bg-slate-950 p-4">
+      <div className="max-w-7xl mx-auto">
+        {/* Graph Navigation Labels */}
+        <div className="mb-4">
+          <div className="flex space-x-1 bg-slate-800/50 rounded-lg p-1">
+            {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
+              <button
+                key={band}
+                onClick={() => {
+                  const element = document.getElementById(`chart-${band}`);
+                  if (element) {
+                    element.scrollIntoView({ 
+                      behavior: 'smooth', 
+                      block: 'nearest',
+                      inline: 'center'
+                    });
+                  }
+                }}
+                className="flex-1 px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 hover:bg-slate-700/50 text-slate-300 hover:text-slate-100"
+              >
+                {band === 'raw' ? 'Raw EEG' : `${band.toUpperCase()} Band`}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-        {/* Charts Stack */}
-        <div className="space-y-6">
+      {/* Horizontal Charts Container - Full Width */}
+      <div className="w-full overflow-x-auto scrollbar-hide">
+        <div className="flex space-x-6 min-w-max px-[10vw]">
           {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
-            <Card key={band} className="bg-slate-900/50 border-slate-700">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-lg font-medium text-slate-100">
-                  {band === 'raw' ? 'Raw EEG' : `${band.toUpperCase()} Band`}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80 p-4 rounded-lg bg-slate-800/30 border border-slate-700">
-                  <Line 
-                    data={chartData[band]} 
-                    options={{
-                      ...chartOptions,
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: {
-                        ...chartOptions.plugins,
-                        legend: {
-                          display: true,
-                          position: 'top' as const,
-                          labels: {
-                            usePointStyle: true,
-                            padding: 8,
-                            font: {
-                              size: 10
+            <div key={band} id={`chart-${band}`} className="w-[80vw] flex-shrink-0">
+              <Card className="bg-slate-900/50 border-slate-700 h-full">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-xl font-medium text-slate-100">
+                    {band === 'raw' ? 'Raw EEG' : `${band.toUpperCase()} Band`}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[calc(100vh-320px)] p-4 rounded-lg bg-slate-800/30 border border-slate-700">
+                    <Line 
+                      data={chartData[band]} 
+                      options={{
+                        ...chartOptions,
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                          ...chartOptions.plugins,
+                          legend: {
+                            display: true,
+                            position: 'top' as const,
+                            labels: {
+                              usePointStyle: true,
+                              padding: 12,
+                              font: {
+                                size: 12
+                              }
                             }
                           }
                         }
-                      }
-                    }} 
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                      }} 
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           ))}
         </div>
-
-
       </div>
     </div>
   );
