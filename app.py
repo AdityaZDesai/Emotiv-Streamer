@@ -46,18 +46,24 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
     
     def add_to_filtered_plot_buffer(self, raw_data, filtered_data, timestamp):
         """Override to send data to Flask - simplified version"""
-        # Call the parent method first
-        super().add_to_filtered_plot_buffer(raw_data, filtered_data, timestamp)
+        # Don't call parent method to avoid any unwanted data sending
+        # super().add_to_filtered_plot_buffer(raw_data, filtered_data, timestamp)
         
         # Send data to Flask if callback is set
         if self.data_callback:
             # Send raw data
             self.data_callback('raw', raw_data, timestamp)
             
-            # Send filtered data for each band
+            # Send filtered data for each band only if it has actual data
             for band, data in filtered_data.items():
                 if band in ['delta', 'theta', 'alpha', 'beta', 'gamma']:
-                    self.data_callback(band, data, timestamp)
+                    # Only send data if it's not empty
+                    if data and len(data) > 0:
+                        print(f"🔍 SENDING {band} data: {len(data)} values")
+                        self.data_callback(band, data, timestamp)
+                    else:
+                        print(f"🔍 SKIPPING {band} data - empty")
+                    # Don't send anything if data is empty - this will keep the chart empty
     
     def start_recording(self, duration=None):
         """Optimized recording - no heavy filtering or plotting"""
@@ -129,11 +135,18 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                         self.live_filter = LiveEEGFilter(fs=self.sampling_rate)
                         # Reduce buffer size for faster response
                         self.live_filter.artifact_window = int(self.sampling_rate * 0.5)  # 0.5 seconds instead of 2
+                        print(f"🔧 Filter artifact window set to: {self.live_filter.artifact_window} samples")
                         self.enable_live_filtering = True
+                    else:
+                        # Ensure the existing filter has the correct window size
+                        if self.live_filter.artifact_window != int(self.sampling_rate * 0.5):
+                            self.live_filter.artifact_window = int(self.sampling_rate * 0.5)
+                            print(f"🔧 Updated filter artifact window to: {self.live_filter.artifact_window} samples")
                     
                     if self.enable_live_filtering and hasattr(self, 'live_filter'):
                         print(f"🔍 DEBUG: Live filtering enabled, processing {len(raw_data) if isinstance(raw_data, (list, np.ndarray)) else 1} channels")
                         print(f"🔍 DEBUG: Raw data sample: {raw_data[:3] if isinstance(raw_data, (list, np.ndarray)) else raw_data}")
+                        print(f"🔍 DEBUG: Buffer has {len(self.live_filter.raw_buffer)} samples, need {self.live_filter.artifact_window}")
                         # Handle single or multi-channel data
                         if isinstance(raw_data, (list, np.ndarray)) and hasattr(raw_data, '__len__'):
                             raw_list = raw_data.tolist() if hasattr(raw_data, 'tolist') else raw_data
@@ -148,8 +161,26 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                                 ch_filtered = self.live_filter.process_sample(raw_sample, channel=ch_idx)
                                 if ch_idx == 0:  # Debug first channel only
                                     print(f"🔍 DEBUG: Channel {ch_idx} filtered results: {ch_filtered}")
+                                    
+                                    # Debug: Check if filtering actually worked
+                                    if 'delta' in ch_filtered:
+                                        raw_val = raw_sample
+                                        delta_val = ch_filtered['delta']
+                                        # Handle empty list case
+                                        if isinstance(delta_val, list) and len(delta_val) == 0:
+                                            print(f"🔧 DEBUG: Channel {ch_idx} delta band - buffer not full yet (empty list)")
+                                        elif abs(raw_val - delta_val) < 0.001:
+                                            print(f"⚠️ WARNING: Channel {ch_idx} filtering may not be working - raw={raw_val:.6f}, delta={delta_val:.6f}")
+                                        else:
+                                            print(f"✅ SUCCESS: Channel {ch_idx} filtering working - raw={raw_val:.6f}, delta={delta_val:.6f}")
+                                
                                 for band, value in ch_filtered.items():
-                                    multi_channel_filtered[band].append(value)
+                                    # Handle empty lists (buffer not full yet)
+                                    if isinstance(value, list) and len(value) == 0:
+                                        # Use 0.0 for empty data to maintain channel count
+                                        multi_channel_filtered[band].append(0.0)
+                                    else:
+                                        multi_channel_filtered[band].append(value)
 
                             # Store multi-channel filtered results
                             filtered_results = multi_channel_filtered
@@ -157,17 +188,17 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                                 if band in self.filtered_data_buffers:
                                     self.filtered_data_buffers[band].append(values)
                         else:
-                            # Not enough data for filtering yet - provide immediate fallback
-                            print(f"🔍 DEBUG: Not enough data for filtering ({len(raw_list)} samples), providing fallback")
-                            # Create simple filtered bands with slight variations for immediate display
+                            # Not enough data for filtering yet - provide empty data
+                            print(f"🔍 DEBUG: Not enough data for filtering ({len(raw_list)} samples), providing empty data")
+                            # Create empty filtered bands until filtering is ready
                             filtered_results = {
-                                'delta': [val * 0.8 for val in raw_list],  # Slightly lower amplitude
-                                'theta': [val * 0.9 for val in raw_list],  # Slightly lower amplitude
-                                'alpha': [val * 1.1 for val in raw_list],  # Slightly higher amplitude
-                                'beta': [val * 1.2 for val in raw_list],   # Higher amplitude
-                                'gamma': [val * 0.7 for val in raw_list]   # Lower amplitude
+                                'delta': [],
+                                'theta': [],
+                                'alpha': [],
+                                'beta': [],
+                                'gamma': []
                             }
-                            # Store fallback results
+                            # Store empty results
                             for band, values in filtered_results.items():
                                 if band in self.filtered_data_buffers:
                                     self.filtered_data_buffers[band].append(values)
@@ -197,7 +228,12 @@ class FlaskEEGRecorder(EEGRecorderWithFilter):
                         filtered_results = self.live_filter.process_sample(raw_sample, channel=0)
                         for band, value in filtered_results.items():
                             if band in self.filtered_data_buffers:
-                                self.filtered_data_buffers[band].append(value)
+                                # Handle empty lists (buffer not full yet)
+                                if isinstance(value, list) and len(value) == 0:
+                                    # Use 0.0 for empty data to maintain consistency
+                                    self.filtered_data_buffers[band].append(0.0)
+                                else:
+                                    self.filtered_data_buffers[band].append(value)
 
                     # Add to plot buffers for web streaming
                     if self.data_callback:
@@ -252,7 +288,8 @@ def data_callback(band, data, timestamp):
                 for value in data:
                     data_values.append(float(value) if value is not None else 0.0)
         else:
-            data_values = [0.0]
+            # Don't send any data if the input is empty
+            return
     else:
         data_values = [float(data) if data is not None else 0.0]
     

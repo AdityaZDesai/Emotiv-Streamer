@@ -218,6 +218,7 @@ class LiveEEGFilter:
         # If we have enough data, apply filtering to recent chunk
         if len(self.raw_buffer) >= self.artifact_window:
             recent_data = np.array(list(self.raw_buffer)[-self.artifact_window:])
+            print(f"🔧 FILTER DEBUG: Processing {len(recent_data)} samples for filtering")
             # Apply filtering for each band using filter_data.py functions
             for band, (low_freq, high_freq) in self.filters.items():
                 try:
@@ -225,6 +226,7 @@ class LiveEEGFilter:
                     filtered_chunk = bandpass_filter(
                         recent_data, low_freq, high_freq, self.fs, self.filter_order
                     )
+                    print(f"🔧 FILTER DEBUG: {band} band ({low_freq}-{high_freq}Hz) filtered chunk length: {len(filtered_chunk)}")
                     
                     # Band-specific artifact handling based on movement sensitivity
                     if band == 'alpha':
@@ -268,9 +270,10 @@ class LiveEEGFilter:
                     if 'Warning' not in str(e):  # Avoid spam
                         print(f"Warning: Filtering failed for {band} band: {e}")
         else:
-            # Not enough data yet, return raw sample for all bands
+            # Not enough data yet, return empty data for all bands
+            print(f"🔧 FILTER DEBUG: Buffer not full ({len(self.raw_buffer)} < {self.artifact_window}), returning empty data")
             for band in self.filters:
-                filtered_results[band] = raw_sample
+                filtered_results[band] = []  # Return empty list instead of raw sample
         
         return filtered_results
     

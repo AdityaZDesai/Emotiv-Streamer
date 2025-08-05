@@ -59,6 +59,7 @@ const EEGInterface: React.FC = () => {
   const [currentValues, setCurrentValues] = useState<{[key: string]: number}>({});
   const [status, setStatus] = useState<string>('Ready');
   const [fps, setFps] = useState<number>(0);
+  const [logs, setLogs] = useState<string[]>([]);
   const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const frameCountRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(Date.now());
@@ -75,7 +76,7 @@ const EEGInterface: React.FC = () => {
   ];
 
   const initializeChart = () => {
-    console.log('Initializing charts...');
+    addLog('Initializing charts with empty data...');
     const initialChartData = {
       raw: { labels: [], datasets: [] },
       alpha: { labels: [], datasets: [] },
@@ -84,46 +85,102 @@ const EEGInterface: React.FC = () => {
       theta: { labels: [], datasets: [] },
       gamma: { labels: [], datasets: [] }
     };
-    console.log('Setting initial chart data:', initialChartData);
+    addLog('Setting initial chart data to empty');
     setChartData(initialChartData);
   };
 
+  const addLog = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `[${timestamp}] ${message}`;
+    setLogs(prev => [...prev.slice(-99), logEntry]); // Keep last 100 logs
+    console.log(message);
+  };
+
   const updateAllCharts = (data: EEGResponse) => {
-    console.log('updateAllCharts called with data:', data);
+    addLog('updateAllCharts called with data');
     
     const newChartData = { ...chartData };
     
     // Update each band's chart
     const bands = ['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const;
     
+    // Check if this is the first time we're getting real filtered data (different from raw)
+    let hasRealFilteredData = false;
+    let rawFirstValue = null;
+    
+    // Get the first value from raw data for comparison
+    if (data.raw && data.raw.values && data.raw.values.length > 0) {
+      const rawFirstChannel = data.raw.values[0] || [];
+      if (rawFirstChannel.length > 0) {
+        rawFirstValue = rawFirstChannel[0];
+      }
+    }
+    
+    // Check if any filtered band has different values from raw
+    bands.forEach(band => {
+      if (band !== 'raw') {
+        const bandData = data[band];
+        if (bandData && bandData.values && bandData.values.length > 0) {
+          const firstChannelData = bandData.values[0] || [];
+          if (firstChannelData.length > 0) {
+            const filteredFirstValue = firstChannelData[0];
+            // If the filtered value is different from raw, we have real filtering
+            if (rawFirstValue !== null && Math.abs(filteredFirstValue - rawFirstValue) > 0.001) {
+              hasRealFilteredData = true;
+              addLog(`🎯 Real filtering detected! ${band}: raw=${rawFirstValue.toFixed(3)}, filtered=${filteredFirstValue.toFixed(3)}`);
+            }
+          }
+        }
+      }
+    });
+    
+    // If we have real filtered data for the first time, clear all filtered charts
+    if (hasRealFilteredData) {
+      addLog('🎉 First real filtered data detected! Clearing old filtered charts...');
+      bands.forEach(band => {
+        if (band !== 'raw') {
+          newChartData[band] = {
+            labels: [],
+            datasets: []
+          };
+        }
+      });
+    }
+    
     bands.forEach(band => {
       const bandData = data[band];
       if (bandData && bandData.values && bandData.values.length > 0) {
-        console.log(`Updating ${band} chart with ${bandData.channels} channels`);
-        
-        const datasets = [];
-        // Create datasets for each channel
-        for (let ch = 0; ch < bandData.channels; ch++) {
-          const channelData = bandData.values[ch] || [];
-          datasets.push({
-            label: `Channel ${ch + 1}`,
-            data: channelData,
-            borderColor: channelColors[ch % channelColors.length],
-            backgroundColor: channelColors[ch % channelColors.length] + '20',
-            borderWidth: 1.5,
-            fill: false,
-            tension: 0.1,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            stepped: false,
-            cubicInterpolationMode: 'monotone' as const
-          });
-        }
+        // Check if this is empty data (for filtered bands)
+        const firstChannelData = bandData.values[0] || [];
+        if (band === 'raw' || firstChannelData.length > 0) {
+          addLog(`Updating ${band} chart with ${bandData.channels} channels`);
+          
+          const datasets = [];
+          // Create datasets for each channel
+          for (let ch = 0; ch < bandData.channels; ch++) {
+            const channelData = bandData.values[ch] || [];
+            datasets.push({
+              label: `Channel ${ch + 1}`,
+              data: channelData,
+              borderColor: channelColors[ch % channelColors.length],
+              backgroundColor: channelColors[ch % channelColors.length] + '20',
+              borderWidth: 1.5,
+              fill: false,
+              tension: 0.1,
+              pointRadius: 0,
+              pointHoverRadius: 3,
+              stepped: false,
+              cubicInterpolationMode: 'monotone' as const
+            });
+          }
 
-        newChartData[band] = {
-          labels: bandData.timestamps.map(t => t.toFixed(1)),
-          datasets
-        };
+          newChartData[band] = {
+            labels: bandData.timestamps.map(t => t.toFixed(1)),
+            datasets
+          };
+        } else {
+          addLog(`Skipping ${band} chart - no data yet`);
+        }
       }
     });
     
@@ -211,7 +268,7 @@ const EEGInterface: React.FC = () => {
       });
 
       // Update all charts with the new data
-      console.log('Updating all charts with data');
+      addLog('Updating all charts with data');
       updateAllCharts(data);
 
     } catch (error) {
@@ -246,7 +303,8 @@ const EEGInterface: React.FC = () => {
 
   const startRecording = async () => {
     try {
-      console.log('Starting recording...');
+      setLogs([]); // Clear logs when starting new recording
+      addLog('Starting recording...');
       setStatus('Starting recording...');
       const response = await fetch('http://localhost:5000/api/start_recording', {
         method: 'POST',
@@ -256,14 +314,14 @@ const EEGInterface: React.FC = () => {
       });
 
       const result = await response.json();
-      console.log('Start recording result:', result);
+      addLog(`Start recording result: ${result.status} - ${result.message}`);
       
       if (result.status === 'success') {
         setIsRecording(true);
         isRecordingRef.current = true;
         setStatus('Recording active');
         initializeChart();
-        console.log('Starting data loop...');
+        addLog('Starting data loop...');
         
         // Start high-frequency data loop using requestAnimationFrame
         // Only start if not already running
@@ -274,13 +332,14 @@ const EEGInterface: React.FC = () => {
         setStatus(`Error: ${result.message}`);
       }
     } catch (error) {
-      console.error('Error starting recording:', error);
+      addLog(`Error starting recording: ${error}`);
       setStatus('Error starting recording');
     }
   };
 
   const stopRecording = async () => {
     try {
+      addLog('Stopping recording...');
       setStatus('Stopping recording...');
       const response = await fetch('http://localhost:5000/api/stop_recording', {
         method: 'POST',
@@ -290,6 +349,7 @@ const EEGInterface: React.FC = () => {
       });
 
       const result = await response.json();
+      addLog(`Stop recording result: ${result.status} - ${result.message}`);
       
       if (result.status === 'success') {
         setIsRecording(false);
@@ -312,7 +372,7 @@ const EEGInterface: React.FC = () => {
         setStatus(`Error: ${result.message}`);
       }
     } catch (error) {
-      console.error('Error stopping recording:', error);
+      addLog(`Error stopping recording: ${error}`);
       setStatus('Error stopping recording');
     }
   };
@@ -333,17 +393,12 @@ const EEGInterface: React.FC = () => {
       const newBandData = currentDataRef.current[band];
       console.log(`  New band data for ${band}:`, newBandData);
       
-              if (newBandData && newBandData.values.length > 0) {
-          console.log(`  ✅ Band ${band} has data, updating all charts`);
-          console.log(`  Data structure:`, {
-            channels: newBandData.channels,
-            timestampsLength: newBandData.timestamps.length,
-            valuesLength: newBandData.values.length,
-            firstChannelValues: newBandData.values[0]?.slice(0, 5)
-          });
-          updateAllCharts(currentDataRef.current!);
-        } else {
-        console.log(`❌ No data available for band ${band}`);
+                    if (newBandData && newBandData.values.length > 0) {
+        addLog(`✅ Band ${band} has data, updating all charts`);
+        addLog(`Data structure: channels=${newBandData.channels}, timestamps=${newBandData.timestamps.length}, values=${newBandData.values.length}`);
+        updateAllCharts(currentDataRef.current!);
+      } else {
+        addLog(`❌ No data available for band ${band}`);
       }
     } else {
       console.log('❌ No current data available for band change');
@@ -470,12 +525,7 @@ const EEGInterface: React.FC = () => {
             >
               {isRecording ? 'Stop Recording' : 'Start Recording'}
             </button>
-            <button 
-              onClick={updateData}
-              className="px-4 py-2 rounded-lg font-medium transition-colors bg-green-500 hover:bg-green-600 text-white"
-            >
-              Test Data Fetch
-            </button>
+
 
             {/* All bands are now displayed simultaneously */}
             <div className="text-sm text-gray-600">
@@ -535,6 +585,30 @@ const EEGInterface: React.FC = () => {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Logs Section */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">System Logs</h2>
+            <button
+              onClick={() => setLogs([])}
+              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+            >
+              Clear Logs
+            </button>
+          </div>
+          <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm h-64 overflow-y-auto">
+            {logs.length === 0 ? (
+              <div className="text-gray-500">No logs yet. Start recording to see activity...</div>
+            ) : (
+              logs.map((log, index) => (
+                <div key={index} className="mb-1">
+                  {log}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>
