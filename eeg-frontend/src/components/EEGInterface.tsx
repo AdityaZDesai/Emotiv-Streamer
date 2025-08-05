@@ -14,6 +14,10 @@ import {
   ChartData,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 
 ChartJS.register(
   CategoryScale,
@@ -96,12 +100,12 @@ const EEGInterface: React.FC = () => {
     checkDeviceStatus();
   }, []);
 
-  // Channel colors for multi-channel display
+  // Channel colors for multi-channel display - minimalistic colors
   const channelColors = [
-    '#667eea', '#f093fb', '#4facfe', '#43e97b', 
-    '#fa709a', '#fee140', '#a8edea', '#fed6e3',
-    '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4',
-    '#ffeaa7', '#dda0dd'
+    '#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', 
+    '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6',
+    '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
+    '#ec4899', '#8b5cf6'
   ];
 
   const initializeChart = () => {
@@ -193,7 +197,7 @@ const EEGInterface: React.FC = () => {
               data: channelData,
               borderColor: channelColors[ch % channelColors.length],
               backgroundColor: channelColors[ch % channelColors.length] + '20',
-              borderWidth: 1.5,
+              borderWidth: 1,
               fill: false,
               tension: 0.1,
               pointRadius: 0,
@@ -472,31 +476,49 @@ const EEGInterface: React.FC = () => {
         display: true,
         title: {
           display: true,
-          text: 'Time (seconds)'
+          text: 'Time (seconds)',
+          font: {
+            size: 12,
+            weight: 'bold'
+          }
         },
         grid: {
-          color: 'rgba(0,0,0,0.1)'
+          color: 'rgba(148, 163, 184, 0.1)',
+          lineWidth: 1
         },
         ticks: {
           maxTicksLimit: 15, // Fewer ticks for better performance
           autoSkip: true,
-          autoSkipPadding: 10
+          autoSkipPadding: 10,
+          font: {
+            size: 10
+          }
         }
       },
       y: {
         display: true,
         title: {
           display: true,
-          text: 'Amplitude (μV)'
+          text: 'Amplitude (μV)',
+          font: {
+            size: 12,
+            weight: 'bold'
+          }
         },
         grid: {
-          color: 'rgba(0,0,0,0.1)'
+          color: 'rgba(148, 163, 184, 0.1)',
+          lineWidth: 1
+        },
+        ticks: {
+          font: {
+            size: 10
+          }
         }
       }
     },
     plugins: {
       legend: {
-        display: currentBand === 'raw',
+        display: true, // Show legend to see channel colors
         position: 'top' as const,
         labels: {
           usePointStyle: true,
@@ -520,145 +542,125 @@ const EEGInterface: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-slate-950 p-6">
+      <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            EEG Recording Interface
-          </h1>
-          <p className="text-gray-600">
-            Real-time EEG data visualization with multi-channel support
-          </p>
-          <div className="mt-4 flex items-center space-x-4">
-            <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-              isRecording 
-                ? 'bg-green-100 text-green-800' 
-                : 'bg-gray-100 text-gray-800'
-            }`}>
-              {isRecording ? 'Recording' : 'Stopped'}
+        <Card className="mb-8 bg-slate-900/50 border-slate-700">
+          <CardHeader className="text-center pb-4">
+            <CardTitle className="text-3xl font-light text-slate-100 mb-2">
+              Neural Interface
+            </CardTitle>
+            <p className="text-slate-400 text-sm">
+              Real-time EEG data visualization
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center items-center gap-3">
+              <Badge variant={isRecording ? "destructive" : "secondary"} className="text-xs font-medium">
+                {isRecording ? 'Recording' : 'Stopped'}
+              </Badge>
+              <Badge variant="outline" className="text-xs font-medium border-slate-600 text-slate-300">
+                {status}
+              </Badge>
+              <Badge variant="outline" className="text-xs font-medium border-slate-600 text-slate-300">
+                {fps} FPS
+              </Badge>
+              <Badge variant="outline" className={`text-xs font-medium ${
+                deviceInfo.is_emulator 
+                  ? 'border-amber-600 text-amber-300' 
+                  : deviceInfo.type === 'real'
+                  ? 'border-blue-600 text-blue-300'
+                  : 'border-slate-600 text-slate-300'
+              }`}>
+                {deviceInfo.is_emulator ? 'Emulator' : deviceInfo.type === 'real' ? 'Real Device' : 'No Device'}
+              </Badge>
             </div>
-            <div className="text-sm text-gray-600">
-              Status: {status}
-            </div>
-            <div className="text-sm text-gray-600">
-              FPS: {fps}
-            </div>
-            <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-              deviceInfo.is_emulator 
-                ? 'bg-yellow-100 text-yellow-800' 
-                : deviceInfo.type === 'real'
-                ? 'bg-blue-100 text-blue-800'
-                : 'bg-gray-100 text-gray-800'
-            }`}>
-              {deviceInfo.is_emulator ? '🤖 Emulator' : deviceInfo.type === 'real' ? '🎧 Real Device' : '❌ No Device'}
-            </div>
-          </div>
-          {deviceInfo.type !== 'none' && (
-            <div className="mt-2 text-sm text-gray-600">
-              Device: {deviceInfo.name}
-            </div>
-          )}
-        </div>
+            {deviceInfo.type !== 'none' && (
+              <div className="mt-2 text-xs text-slate-500">
+                {deviceInfo.name}
+              </div>
+            )}
+          </CardHeader>
+        </Card>
 
         {/* Controls */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <div className="flex flex-wrap gap-4 items-center">
-            <button
-              onClick={isRecording ? stopRecording : startRecording}
-              className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                isRecording
-                  ? 'bg-red-500 hover:bg-red-600 text-white'
-                  : 'bg-blue-500 hover:bg-blue-600 text-white'
-              }`}
-            >
-              {isRecording ? 'Stop Recording' : 'Start Recording'}
-            </button>
-
-
-            {/* All bands are now displayed simultaneously */}
-            <div className="text-sm text-gray-600">
-              All 6 frequency bands are displayed in the charts below
+        <Card className="mb-8 bg-slate-900/50 border-slate-700">
+          <CardContent className="p-6">
+            <div className="flex flex-wrap gap-4 items-center justify-center">
+              <Button
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                  isRecording
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+              >
+                {isRecording ? 'Stop Recording' : 'Start Recording'}
+              </Button>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* Current Values */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Current Values</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
-              <div key={band} className="text-center">
-                <div className="text-sm font-medium text-gray-600 mb-1">
-                  {band.toUpperCase()}
+        <Card className="mb-8 bg-slate-900/50 border-slate-700">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg font-medium text-slate-100">Current Values</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
+                <div key={band} className="text-center p-3 rounded-lg bg-slate-800/50 border border-slate-700">
+                  <div className="text-xs font-medium text-slate-400 mb-1">
+                    {band.toUpperCase()}
+                  </div>
+                  <div className="text-xl font-mono text-slate-100">
+                    {currentValues[band]?.toFixed(2) || '0.00'}
+                  </div>
+                  <div className="text-xs text-slate-500">μV</div>
                 </div>
-                <div className="text-2xl font-bold text-gray-900">
-                  {currentValues[band]?.toFixed(2) || '0.00'}
-                </div>
-                <div className="text-xs text-gray-500">μV</div>
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Charts Stack */}
         <div className="space-y-6">
           {(['raw', 'alpha', 'beta', 'delta', 'theta', 'gamma'] as const).map((band) => (
-            <div key={band} className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                {band === 'raw' ? 'Multi-Channel Raw EEG' : `${band.toUpperCase()} Band`}
-              </h2>
-              <div className="h-96">
-                <Line 
-                  data={chartData[band]} 
-                  options={{
-                    ...chartOptions,
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                      ...chartOptions.plugins,
-                      legend: {
-                        display: true, // Show legend to see channel colors
-                        position: 'top' as const,
-                        labels: {
-                          usePointStyle: true,
-                          padding: 10,
-                          font: {
-                            size: 11
+            <Card key={band} className="bg-slate-900/50 border-slate-700">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-medium text-slate-100">
+                  {band === 'raw' ? 'Raw EEG' : `${band.toUpperCase()} Band`}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80 p-4 rounded-lg bg-slate-800/30 border border-slate-700">
+                  <Line 
+                    data={chartData[band]} 
+                    options={{
+                      ...chartOptions,
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        ...chartOptions.plugins,
+                        legend: {
+                          display: true,
+                          position: 'top' as const,
+                          labels: {
+                            usePointStyle: true,
+                            padding: 8,
+                            font: {
+                              size: 10
+                            }
                           }
                         }
                       }
-                    }
-                  }} 
-                />
-              </div>
-            </div>
+                    }} 
+                  />
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
 
-        {/* Logs Section */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">System Logs</h2>
-            <button
-              onClick={() => setLogs([])}
-              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
-            >
-              Clear Logs
-            </button>
-          </div>
-          <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm h-64 overflow-y-auto">
-            {logs.length === 0 ? (
-              <div className="text-gray-500">No logs yet. Start recording to see activity...</div>
-            ) : (
-              logs.map((log, index) => (
-                <div key={index} className="mb-1">
-                  {log}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+
       </div>
     </div>
   );
